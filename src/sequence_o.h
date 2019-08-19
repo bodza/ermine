@@ -5,7 +5,7 @@ class sequence final : public object, public seekable_i {
 
     type_t type() const final { return type_id<sequence>; }
 
-#if !defined(FERRET_DISABLE_STD_OUT)
+#if !defined(ERMINE_DISABLE_STD_OUT)
     void stream_console() const final {
       seekable_i::stream_console(var((object*)this));
     }
@@ -53,7 +53,7 @@ class sequence final : public object, public seekable_i {
     }
   }
 
-  #ifdef FERRET_STD_LIB
+  #ifdef ERMINE_STD_LIB
   typedef ::std::vector<var>  std_vector;
 
   template <> std_vector sequence::to(ref v) { 

@@ -1,59 +1,261 @@
-(ns compiler.core
+(ns ermine.core
   (:refer-clojure :exclude [compile])
-  (:gen-class)
-  (:use [clojure.java.io])
-  (:require [compiler.io :as io]
-            [compiler.parser :as parser]
-            [clojure.set :as set]
+  (:use [clojure.java.io]
+        [clojure.java.shell])
+  (:import (java.io BufferedReader InputStreamReader)
+           (org.apache.commons.io FilenameUtils FileUtils)
+           (org.apache.commons.lang StringEscapeUtils)
+           (org.antlr.stringtemplate StringTemplateGroup StringTemplate))
+  (:require [clojure.set :as set]
             [flatland.ordered.map :as ordered-map]
             [fast-zip.core :as zip]
             [clojure.walk :as walk]
             [clojure.stacktrace :as stacktrace]
             [clojure.pprint :as pprint]
-            [clj-jgit.util :as jgit-util]
-            [clj-jgit.porcelain :as jgit]
-            [clojure.tools.cli :refer [parse-opts]]
-            [watchtower.core :as watcher])
-  (:use [compiler [template :only [render-template]]]
-        [clojure.java.shell]
-        [clojure.tools [logging :only [warn info]]]))
+            [clojure.tools.cli :refer [parse-opts]]))
 
-(System/setProperty "org.slf4j.simpleLogger.showLogName" "false")
-(System/setProperty "org.slf4j.simpleLogger.showDateTime" "true")
-(System/setProperty "org.slf4j.simpleLogger.dateTimeFormat" "HH:mm:ss")
-(System/setProperty "org.slf4j.simpleLogger.showThreadName" "false")
+(defn create-view
+  ([]
+   (StringTemplate.))
+  ([^String template]
+   (StringTemplate. template)))
+
+(defn stringify [any]
+  (if (keyword? any)
+    (name any)
+    (str any)))
+
+(declare kv-to-sv)
+(declare scan-kv-to-sv)
+
+(defn each-kv-to-sv [each]
+  (if (map? each)
+    (kv-to-sv each)
+    (if (or (vector? each) (list? each) (seq? each) (set? each))
+      (scan-kv-to-sv each)
+      each)))
+
+(defn scan-kv-to-sv [coll]
+  (map each-kv-to-sv coll))
+
+(defn kv-to-sv [mp]
+  (let [m (into {} mp)
+        k (keys m)
+        v (vals m)]
+    (zipmap
+     (map stringify k)
+     (scan-kv-to-sv v))))
+
+(defn get-view-from-classpath [^String view-name]
+  (let [st-group (StringTemplateGroup. "default")]
+    (.getInstanceOf st-group view-name)))
+
+(defn get-view-from-dir [^String view-name ^String root-dir]
+  (let [st-group (StringTemplateGroup. "default" root-dir)]
+    (.getInstanceOf st-group view-name)))
+
+(defn reset-view! [^StringTemplate view ^String template]
+  (.setTemplate view template))
+
+(defn fill-view!
+  ([^StringTemplate template k v]
+    (.setAttribute template (stringify k) (each-kv-to-sv v))
+    template)
+  ([^StringTemplate template kv-map]
+    (.setAttributes template (kv-to-sv kv-map))
+    template))
+
+(defn render-view [^StringTemplate template]
+  (.toString template))
+
+(defmacro render-template [template & vars]
+  `(let [vars# (hash-map ~@vars)
+         view# (create-view ~template)]
+     (doseq [[k# v#] vars#]
+       (fill-view! view# (name k#) v#))
+     (render-view view#)))
+
+(def extension-cpp "cpp")
+
+(defn exit-failure []
+  (System/exit 1))
+
+(defn exit-success []
+  (System/exit 0))
+
+(defn read-file [f & [options]]
+  (try
+    (with-open [in (.getResourceAsStream (ClassLoader/getSystemClassLoader) f)
+                rdr (BufferedReader. (InputStreamReader. in))]
+      (apply str (interpose \newline (line-seq rdr))))
+    (catch Exception _
+      (try
+        (if (nil? options)
+          (FileUtils/readFileToString (file f))
+          (FileUtils/readFileToString (file (str (:path options) f))))
+        (catch Exception _
+          #_(warn "error reading =>" f)
+          (exit-failure))))))
+
+(defn write-to-file [f s]
+  (FileUtils/writeStringToFile (file f) (.trim s)))
+
+(defn escape-string [s]
+  (StringEscapeUtils/escapeJava s))
+
+(defn file-path [file]
+  (let [path (str (FilenameUtils/getPrefix file) (FilenameUtils/getPath file))]
+    (if (empty? path) "./" path)))
+
+(defn file-extension [f]
+  (FilenameUtils/getExtension f))
+
+(defn file-base-name [f]
+  (FilenameUtils/getBaseName f))
+
+(defn file-exists [f]
+  (.exists (file f)))
+
+(defn make-file [p n e]
+  (file (str p n "." e)))
+
+(defn form?
+  ([s]
+   #(form? s %))
+  ([s f]
+   (and (seq? f)
+        (= (first f) s))))
+
+(defn symbol-set [form]
+  (->> form flatten (filter symbol?) (into #{})))
+
+(defn split-fn [sig]
+  (let [name (if (symbol? (second sig)) (second sig) nil)
+        sig  (if name (drop 2 sig) (rest sig))
+        [args & body] sig]
+    [name args body]))
+
+(defn ffi-fn? [body]
+  (and (not (nil? body))
+       (not (empty? body))
+       (->> (map string? body)
+            (every? true?))))
+
+(defn fn-arg-symbol? [s]
+  (and (symbol? s)
+       (not= s '&)
+       (not= s '_)
+       (not= s 'fir-destructure-associative)))
+
+(defn transform [tree pred f]
+  (walk/prewalk (fn [form]
+                  (if (pred form)
+                    (let [new-form (f form)
+                          meta (meta form)]
+                      (if (and (instance? clojure.lang.IMeta form)
+                               (instance? clojure.lang.IMeta new-form))
+                        (with-meta new-form meta)
+                        new-form))
+                    form))
+                tree))
+
+(defn parser-drop [tree pred]
+  (if (every? true? (map #(pred %) tree))
+    (list )
+    (loop [loc (zip/seq-zip tree)]
+      (if (zip/end? loc)
+        (zip/root loc)
+        (recur
+         (zip/next
+          (if (pred (zip/node loc))
+            (zip/remove loc)
+            loc)))))))
+
+(defn parser-peek [tree pred & [node-fn]]
+  (let [node-fn (if node-fn
+                  node-fn
+                  #(zip/node %))]
+    (loop [loc (zip/seq-zip tree)
+           nodes []]
+      (if (zip/end? loc)
+        nodes
+        (recur
+         (zip/next loc)
+         (if (pred (zip/node loc))
+           (conj nodes (node-fn loc))
+           nodes))))))
+
+(defn new-symbol [& parts]
+  (let [parts (map #(.replace (str %) "." "_") parts)]
+    (symbol (apply str parts))))
+
+(defn fn-make-unique [args body]
+  (if (string?  (->> body
+                     (filter #(not (form? 'native-declare %)))
+                     first))
+    [args body]
+    (let [unique-args (->> args
+                           flatten
+                           (filter fn-arg-symbol?)
+                           (map #(new-symbol % (gensym "__"))))
+          replace? (->> (interleave (->> args
+                                         flatten
+                                         (filter fn-arg-symbol?))
+                                    unique-args)
+                        (apply hash-map))
+          body      (transform body #(replace? %) #(replace? %))
+          replace?  (merge replace? {'fir-new-map 'fir-destructure-associative})
+          args      (transform args #(replace? %) #(replace? %))]
+      [args body])))
+
+(defn new-fir-fn
+  ([& {:keys [name args body escape] :or {escape  true
+                                          args    []}}]
+   (let [name-unique (if name
+                       (new-symbol name (gensym "__")))
+         [args body] (if escape
+                       (fn-make-unique args body)
+                       [args body])
+         body        (if name-unique
+                       (transform body #(= % name) (fn [_] name-unique))
+                       body)]
+     (if name-unique
+       `(fn* ~name-unique ~args ~@body)
+       `(fn* ~args ~@body)))))
 
 (defn append-to! [r ks v]
   (let [cv (reduce (fn[h v] (v h)) @r ks)]
     (swap! r assoc-in ks (conj cv v))
     ""))
+
 (defn read-clojure-file [f]
   (let [ns (gensym)
         ns-str (str ns)]
     (create-ns ns)
     (binding [*ns* (the-ns ns)]
       (refer 'clojure.core)
-      (-> (read-string (str \( (io/read-file f) \)))
-          (parser/transform
+      (-> (read-string (str \( (read-file f) \)))
+          (transform
            symbol?
            #(if (= (namespace %) ns-str)
               (-> % name symbol)
               %))
           ;;replace clojure.core/fn with fn
           ;;replace clojure.core/while with while
-          (parser/transform
+          (transform
            (fn [x]
-             (and (parser/form? 'quote x)
+             (and (form? 'quote x)
                   (or (= 'clojure.core/fn    (second x))
                       (= 'clojure.core/defn  (second x))
                       (= 'clojure.core/while (second x)))))
            (fn [[_ s]] `'~(-> s name symbol)))))))
+
 (defn expand-reader-macros [form]
   (-> form
-      (parser/transform
-       (parser/form? 'clojure.core/deref)
+      (transform
+       (form? 'clojure.core/deref)
        (fn [f] (cons 'deref (rest f))))
-      (parser/transform
+      (transform
        map?
        (fn [x]
          (->> (seq x)
@@ -62,29 +264,29 @@
                  (conj h k v)) [])
               (seq)
               (cons 'fir-new-map))))))
+
 (defn macro-normalize [f]
-  (parser/transform f
-                    (parser/form? 'let)
+  (transform f
+                    (form? 'let)
                     (fn [[_ bindings & body]]
                       `(~'let* ~(apply list bindings) ~@body))))
+
 (defn expand-macros-single [form]
-  (let [core-macros (->> (read-clojure-file "ferret/core.clj")
-                         (filter (parser/form? 'defmacro)))
+  (let [core-macros (->> (read-clojure-file "ermine.clj")
+                         (filter (form? 'defmacro)))
         core-macro-symbols (into #{} (map second core-macros))
-        form-macros (->> (filter (parser/form? 'defmacro) form)
+        form-macros (->> (filter (form? 'defmacro) form)
                          (filter (fn [[_ name]]
                                    (not (core-macro-symbols name)))))
         form-macro-symbols (map second form-macros)
-        form (parser/drop form (parser/form? 'defmacro))
+        form (parser-drop form (form? 'defmacro))
         temp-ns (gensym)
         macro-symbols (concat core-macro-symbols form-macro-symbols)]
 
     (create-ns temp-ns)
     (binding [*ns* (the-ns temp-ns)]
       (refer 'clojure.core :exclude (concat macro-symbols ['fn 'def]))
-      (use '[compiler.io :only [exit-failure]])
-      (use '[compiler.core :only [symbol-conversion]])
-      (use '[compiler.parser :only [new-fir-fn]])
+      (use '[ermine.core :only [exit-failure new-fir-fn symbol-conversion]])
 
       (doseq [m (concat core-macros form-macros)]
         (eval m)))
@@ -92,14 +294,14 @@
     (let [form (-> form
                    (macro-normalize)
                    (expand-reader-macros)
-                   (parser/transform
+                   (transform
                     (fn [f]
-                      (some true? (map #(parser/form? % f) macro-symbols)))
+                      (some true? (map #(form? % f) macro-symbols)))
                     (fn [f]
                       (binding [*ns* (the-ns temp-ns)]
                         (-> (walk/macroexpand-all f)
                             ;;strip ns from symbols
-                            (parser/transform symbol? #(-> % name symbol)))))))]
+                            (transform symbol? #(-> % name symbol)))))))]
       (remove-ns temp-ns)
       form)))
 
@@ -111,38 +313,40 @@
         (recur expanded)))))
 
 (def expand-macros (memoize expand-macros-aux))
+
 (defn shake-concat
   ([header form]
    (let [shakeable? (fn [f]
-                      (or (parser/form? 'defn f)
-                          (parser/form? 'defnative f)))
-         header-symbols (->> (parser/peek header seq?)
-                             (parser/symbol-set))
-         header-fns (->> (parser/peek header shakeable?)
+                      (or (form? 'defn f)
+                          (form? 'defnative f)))
+         header-symbols (->> (parser-peek header seq?)
+                             (symbol-set))
+         header-fns (->> (parser-peek header shakeable?)
                          (map #(vector (second %) %))
                          (into {}))
-         header-non-shakeable (parser/drop header shakeable?)
+         header-non-shakeable (parser-drop header shakeable?)
          form-expanded (expand-macros (concat header-non-shakeable form))
          fns (atom #{})
          _ (shake-concat form-expanded header-fns fns header-non-shakeable)
-         header-shaked (parser/drop header (fn [f]
+         header-shaked (parser-drop header (fn [f]
                                              (and (shakeable? f)
                                                   (not (@fns (second f))))))]
      (concat header-shaked form)))
   ([form built-in fns non-shakeable]
-   (parser/transform form symbol?
+   (transform form symbol?
                      #(do
                         (if-let [f (built-in %)]
                           (when (not (@fns %))
                             (swap! fns conj %)
                             (shake-concat (expand-macros (concat non-shakeable f))
                                           built-in fns non-shakeable))) %))))
+
 (defn escape-fn-calls [form]
-  (let [arity (parser/peek
+  (let [arity (parser-peek
                form
                (fn [f]
-                 (and (parser/form? 'fir-defn-heap f)
-                      (-> (parser/peek f (parser/form? 'fir-defn-arity))
+                 (and (form? 'fir-defn-heap f)
+                      (-> (parser-peek f (form? 'fir-defn-arity))
                           (empty?)
                           (not )))))
         arity (reduce
@@ -163,17 +367,17 @@
                               {} arity)]
     (-> form
         ;; resolve arity calls
-        (parser/transform
-         (parser/form? 'fir-defn-arity)
+        (transform
+         (form? 'fir-defn-arity)
          (fn [f]
-           (parser/transform f
-                             (parser/form? 'fir-fn-heap)
+           (transform f
+                             (form? 'fir-fn-heap)
                              (fn [[_ & f]]
                                `(~'fir-fn-stack ~@f)))))
-        (parser/transform
+        (transform
          (fn [f]
            (and (seq? f)
-                (parser/form? 'fir-fn-heap (first f))
+                (form? 'fir-fn-heap (first f))
                 (arity (-> f first second))))
          (fn [f]
            (let [[[_ fn] & args] f
@@ -182,41 +386,43 @@
              (cond dispatch `((~'fir-fn-heap ~dispatch) ~@args)
                    default  `((~'fir-fn-heap ~default)  ~@args)
                    :default f))))
-        (parser/transform
+        (transform
          (fn [f]
            (and (symbol? f)
                 (arity-renames f)))
          (fn [f]
            (arity-renames f)))
         ;; resolve fn calls
-        (parser/transform
+        (transform
          (fn [f]
            (and (seq? f)
-                (parser/form? 'fir-fn-heap (first f))))
+                (form? 'fir-fn-heap (first f))))
          (fn [f]
            (let [[[_ & fn] & args] f]
              `((~'fir-fn-stack ~@fn) ~@args)))))))
+
 (defn escape-fn-inheritance [form]
-  (let [heap-fns (->> (parser/peek form (parser/form? 'fir-fn-heap))
+  (let [heap-fns (->> (parser-peek form (form? 'fir-fn-heap))
                       (map second)
                       (into #{}))
-        stack-fns (->> (parser/peek form (parser/form? 'fir-fn-stack))
+        stack-fns (->> (parser-peek form (form? 'fir-fn-stack))
                        (map second)
                        (into #{}))
         escapeable-fns (set/difference stack-fns heap-fns)]
-    (parser/transform form
+    (transform form
                       (fn [f]
                         (and (seq? f)
                              (= (first f) 'fir-defn-heap)
                              (escapeable-fns (second f))))
                       (fn [[_ & f]]
                         `(~'fir-defn-stack ~@f)))))
+
 (defn import-modules-select-require [form]
   (let [norm-require (fn [f]
                        (if (symbol? f)
                          [f :as f]
                          f))]
-    (->> (parser/peek form (parser/form? 'require))
+    (->> (parser-peek form (form? 'require))
          (reduce (fn[h v]
                    (if (= 2 (count v))
                      ;; require single module
@@ -228,6 +434,7 @@
                    (if (h mod)
                      (assoc h mod (conj (h mod) as))
                      (assoc h mod [as]))) {}))))
+
 (defn import-modules-load-modules [package-list options]
   (->> package-list
        (reduce (fn[h [m aliases]]
@@ -236,51 +443,53 @@
                                             file-name
                                             (str (:path options) file-name))
                                           (read-clojure-file)
-                                          (parser/drop (parser/form? 'configure-runtime!))
-                                          (parser/drop (parser/form? 'configure-ferret!)))
-                       macro-symbols  (->> (parser/peek mod (parser/form? 'defmacro))
+                                          (parser-drop (form? 'configure-runtime!))
+                                          (parser-drop (form? 'configure-ermine!)))
+                       macro-symbols  (->> (parser-peek mod (form? 'defmacro))
                                            (map second)
                                            (into #{}))
-                       def-symbols    (->> (parser/peek (expand-macros mod) (parser/form? 'def))
+                       def-symbols    (->> (parser-peek (expand-macros mod) (form? 'def))
                                            (map second)
                                            (into #{}))
                        replace?       (set/union macro-symbols def-symbols)
-                       mod            (parser/transform
+                       mod            (transform
                                        mod
                                        #(and (symbol? %)
                                              (replace? %))
-                                       #(parser/new-symbol m "_" %))]
+                                       #(new-symbol m "_" %))]
                    (reduce (fn [h v] (conj h v)) h mod)))
                [])
        lazy-seq))
+
 (defn import-modules-convert-alias-to-module [package-list form]
   (let [alias-to-mod (reduce (fn[h [mod aliases]]
                                (reduce (fn[h v] (assoc h v mod)) h aliases))
                              {} package-list)]
-    (parser/transform form symbol?
+    (transform form symbol?
                       (fn [f]
                         (if-let [[_ alias fn] (re-find #"(.*?)/(.*)" (str f))]
                           (if-let [mod-sym (alias-to-mod (symbol alias))]
-                            (parser/new-symbol mod-sym "_" fn)
+                            (new-symbol mod-sym "_" fn)
                             f)
                           f)))))
+
 (defn import-modules [form options]
   (let [package-list (import-modules-select-require form)
-        form         (parser/drop form (parser/form? 'require))
+        form         (parser-drop form (form? 'require))
         modules      (import-modules-load-modules package-list options)
         non-public?  (->> modules
                           (reduce (fn[private-symbols mod]
                                     (-> mod
-                                        (parser/peek #(and (symbol? %)
+                                        (parser-peek #(and (symbol? %)
                                                            (-> % meta :private)))
                                         (concat private-symbols))) [])
                           (into #{}))
         form         (import-modules-convert-alias-to-module package-list form)
-        violations   (parser/peek form #(non-public? %) #(zip/node (zip/up %)))]
+        violations   (parser-peek form #(non-public? %) #(zip/node (zip/up %)))]
     (when (not (empty? violations))
       (doseq [v violations]
-        (warn "non-public-access =>" v))
-      (io/exit-failure))
+        #_(warn "non-public-access =>" v))
+      (exit-failure))
     (shake-concat modules form)))
 
 (defn import-modules-all [form options]
@@ -289,17 +498,14 @@
       (if (= f expanded)
         expanded
         (recur expanded)))))
-(defn ferret-runtime [options form]
+
+(defn ermine-runtime [options form]
   (->> (-> form
            (import-modules-all options)
            (expand-reader-macros))
-       (shake-concat (read-clojure-file "ferret/core.clj"))
-       ;; tag form with the build info
-       (cons `(~'native-define ~(try
-                                  (let [version (io/read-file-from-url "build.info")]
-                                    (str "// ferret-lisp " version))
-                                  (catch Exception e
-                                    (str "// ferret-lisp")))))))
+       (shake-concat (read-clojure-file "ermine.clj"))
+       (cons `(~'native-define ~(str "// ermine-lisp")))))
+
 (defn let-closure [bindings body]
   (if (empty? bindings)
     `((~'fir-let-fn () ~@body))
@@ -312,25 +518,27 @@
 
 (defn let-assert [bindings body]
   (when (odd? (count bindings))
-    (warn
+    #_(warn
      (str "let requires an even number of forms in binding vector => " bindings))
-    (io/exit-failure)))
+    (exit-failure)))
 
 (defn let->fn [form]
   (-> form
 
-      (parser/transform (parser/form? 'let*)
+      (transform (form? 'let*)
                         (fn [[_ bindings & body]]
                           (let-assert bindings body)
                           (let-closure bindings body)))
 
-      (parser/transform (parser/form? 'fir-let-fn)
+      (transform (form? 'fir-let-fn)
                         (fn [[_ args & body]]
-                          (parser/new-fir-fn :args args :body body)))))
+                          (new-fir-fn :args args :body body)))))
+
 (defn do->fn [form]
-  (parser/transform form
-                    (parser/form? 'do)
-                    (fn [f] `(~(parser/new-fir-fn :body (rest f))))))
+  (transform form
+                    (form? 'do)
+                    (fn [f] `(~(new-fir-fn :body (rest f))))))
+
 (defn fn-defined? [fns env args body]
   (if-let [fn-name (@fns (concat [env args] body))]
     (apply list 'fir-fn-heap fn-name env)))
@@ -349,40 +557,41 @@
          fns  (map (fn [[body name]] (concat ['fir-defn-heap name] body)) @fns)]
      (concat fns form)))
   ([form fns & [env]]
-   (parser/transform
+   (transform
     form
-    (parser/form? 'fn*)
+    (form? 'fn*)
     (fn [sig]
-      (let [[name args body] (parser/split-fn sig)
+      (let [[name args body] (split-fn sig)
             ;; transform named recursion in body
             body (if name
-                   (parser/transform
+                   (transform
                     body
-                    (parser/form? name)
+                    (form? name)
                     (fn [[_ & args]]
                       (cons
                        (apply list 'fir-fn-heap name env)
                        args)))
                    body)
             body (fn->lift body fns (concat args env))
-            symbols (parser/symbol-set body)
+            symbols (symbol-set body)
             env  (->> (set/intersection
                        symbols
                        (into #{} (flatten env)))
                       (into ()))
 
-            args (if (parser/ffi-fn?
-                      (filter #(not (parser/form? 'native-declare %)) body))
+            args (if (ffi-fn?
+                      (filter #(not (form? 'native-declare %)) body))
                    args
-                   (parser/transform args
+                   (transform args
                                      symbol?
                                      (fn [v]
-                                       (if (or (not (parser/fn-arg-symbol? v))
+                                       (if (or (not (fn-arg-symbol? v))
                                                (symbols v))
                                          v '_))))]
         (if-let [n (fn-defined? fns env args body)]
           n
           (define-fn fns env name args body)))))))
+
 (defn escape-cpp-symbol [s]
   (clojure.string/escape
    (str s)
@@ -394,22 +603,18 @@
   (let [c (comp #(symbol (escape-cpp-symbol %))
                 #(cond (= 'not %) '_not_
                        :default %))]
-    (parser/transform form symbol? c)))
-(defn remove-assertions [options form]
-  (if (:release options)
-    (do (info "option => release mode")
-        (parser/drop form (parser/form? 'assert)))
-    form))
+    (transform form symbol? c)))
+
 (defn inline-defn? [f]
-  (and (parser/form? 'def f)
+  (and (form? 'def f)
        (-> f second meta :tag (not= 'volatile))
-       (parser/form? 'fir-fn-heap
+       (form? 'fir-fn-heap
                      (->> f (drop 2) first))))
 
 (defn fn->inline [options form]
   (if (:global-functions options)
     form
-    (let [defns      (->> (parser/peek form inline-defn?)
+    (let [defns      (->> (parser-peek form inline-defn?)
                           (filter #(= 2 (-> % last count))))
           fn-table   (map (fn [[_ name [_ gensym]]] [name gensym]) defns)
           impl-table (apply hash-map (flatten fn-table))
@@ -419,25 +624,26 @@
           invoke     #(if-let [imp (impl-table %)]
                         (list 'fir-fn-heap imp)
                         %)
-          no-defn    (reduce (fn[h v] (parser/drop h defn?)) form defns)
+          no-defn    (reduce (fn[h v] (parser-drop h defn?)) form defns)
           inlined    (reduce (fn[h [name gensym]]
-                               (parser/transform h
-                                                 #(or (parser/form? name %)
-                                                      (parser/form? 'def %))
+                               (transform h
+                                                 #(or (form? name %)
+                                                      (form? 'def %))
                                                  (fn [f] (map invoke f))))
                              no-defn fn-table)]
       (reduce (fn[h [name gensym]]
-                (parser/transform h #(and (symbol? %)
+                (transform h #(and (symbol? %)
                                           (= % gensym))
                                   (fn [_] (identity name))))
               inlined fn-table))))
+
 (defn escape-analysis [form]
   (->> form
        (escape-fn-calls)
        (escape-fn-inheritance)))
+
 (defn compile [form options]
-  (->> (ferret-runtime options form)
-       (remove-assertions options)
+  (->> (ermine-runtime options form)
        (expand-macros)
        (let->fn)
        (do->fn)
@@ -445,24 +651,24 @@
        (fn->inline options)
        (escape-analysis)
        (symbol-conversion)))
+
 (defmulti emit (fn [_ f _]
-                 (cond (parser/form? '(fir_fn_stack list) f)   'fir_inline_list
-                       (parser/form? '(fir_fn_stack first) f)  'fir_inline_first
-                       (parser/form? '(fir_fn_stack rest) f)   'fir_inline_rest
-                       (parser/form? 'fir_defn_heap f)   'fir_defn_heap
-                       (parser/form? 'fir_defn_stack f)  'fir_defn_stack
-                       (parser/form? 'fir_defn_arity f)  'fir_defn_arity
-                       (parser/form? 'fir_fn_heap f)     'fir_fn_heap
-                       (parser/form? 'fir_fn_stack f)    'fir_fn_stack
-                       (parser/form? 'list f)            'list
-                       (parser/form? 'defobject f)       'defobject
-                       (parser/form? 'matrix f)          'matrix
-                       (parser/form? 'native_header f)   'native_header
-                       (parser/form? 'native_declare f)  'native_declare
-                       (parser/form? 'native_define f)   'native_define
-                       (parser/form? 'if f)              'if
-                       (parser/form? 'def f)             'def
-                       (parser/form? 'fir_new_map f)     'fir_new_map
+                 (cond (form? '(fir_fn_stack list) f)   'fir_inline_list
+                       (form? '(fir_fn_stack first) f)  'fir_inline_first
+                       (form? '(fir_fn_stack rest) f)   'fir_inline_rest
+                       (form? 'fir_defn_heap f)   'fir_defn_heap
+                       (form? 'fir_defn_stack f)  'fir_defn_stack
+                       (form? 'fir_defn_arity f)  'fir_defn_arity
+                       (form? 'fir_fn_heap f)     'fir_fn_heap
+                       (form? 'fir_fn_stack f)    'fir_fn_stack
+                       (form? 'list f)            'list
+                       (form? 'defobject f)       'defobject
+                       (form? 'native_header f)   'native_header
+                       (form? 'native_declare f)  'native_declare
+                       (form? 'native_define f)   'native_define
+                       (form? 'if f)              'if
+                       (form? 'def f)             'def
+                       (form? 'fir_new_map f)     'fir_new_map
                        (symbol? f)                 :symbol
                        (keyword? f)                :keyword
                        (number? f)                 :number
@@ -476,11 +682,12 @@
                        :default                    :unsupported-form)))
 
 (defmethod emit :unsupported-form [_ form _]
-  (warn "unsupported form =>" form)
-  (io/exit-failure))
+  #_(warn "unsupported form =>" form)
+  (exit-failure))
 
 (defn emit-ast [options ast state]
   (reduce (fn[h v] (conj h (emit options v state))) [] ast))
+
 (defn emit-source [form options]
   (let [state (atom {:native-headers []
                      :native-declarations []
@@ -493,10 +700,11 @@
     (when (:ast options)
       (pprint/pprint ast))
     (assoc @state :body body)))
+
 (defmethod emit :symbol [_ form state] (str form))
 
 (defmethod emit :string [_ form state]
-  (str "obj<string>(\"" (io/escape-string form) "\"," (count form) ")"))
+  (str "obj<string>(\"" (escape-string form) "\"," (count form) ")"))
 
 (defmethod emit :boolean [_ form state]
   (if (true? form)
@@ -526,9 +734,10 @@
 
 (defmethod emit :regex-pattern [options regex state]
   (emit options
-        (org.apache.commons.lang.StringEscapeUtils/unescapeJava
+        (StringEscapeUtils/unescapeJava
          (str regex))
         state))
+
 (defmethod emit 'def [options [_ name & form] state]
   (append-to! state [:symbol-table] name)
   (str "(" name " = " (apply str (emit-ast options form state)) ")"))
@@ -540,10 +749,10 @@
     (apply str "(" cond " ? " t " : " f ")")))
 
 (defn defobject [name f options]
-  (let [def (io/read-file (first f) options)]
+  (let [def (read-file (first f) options)]
     (render-template
-     "#ifndef FERRET_OBJECT_$guard$
-      #define FERRET_OBJECT_$guard$
+     "#ifndef ERMINE_OBJECT_$guard$
+      #define ERMINE_OBJECT_$guard$
        $body$
       #endif"
      :guard       (.toUpperCase (str name))
@@ -558,21 +767,6 @@
 (defmethod emit 'defobject [options [_ name & spec] state]
   (append-to! state [:objects] (defobject name spec options)))
 
-(defmethod emit 'matrix [options [_ elements] state]
-  (let [rows (count elements)
-        cols (-> elements first count)
-        elements (apply concat elements)
-        elements (map #(if (number? %)
-                         (str "real_t(" % ")")
-                         (str
-                          "number::to<real_t>"
-                          "(" (emit options % state) ")"))
-                      elements)
-        elements (apply str (interpose \, elements))
-        matrix-t (str "size_t(" rows "), size_t(" cols ")," elements)
-        matrix-decl (str "obj<matrix_t>(" matrix-t ")")]
-    matrix-decl))
-
 (defmethod emit 'native_header [_ [_ & declarations] state]
   (append-to! state [:native-headers] declarations))
 
@@ -581,6 +775,7 @@
 
 (defmethod emit 'native_define [_ [_ define] state]
   (append-to! state [:native-defines] define))
+
 (defmethod emit 'fir_inline_list [options [_ & args] state]
   (str "rt::list(" (apply str (interpose \, (emit-ast options args state))) ")"))
 
@@ -589,6 +784,7 @@
 
 (defmethod emit 'fir_inline_rest [options [_ & seq] state]
   (str "rt::rest(" (apply str (emit-ast options seq state)) ")"))
+
 (defn norm-fn-env [env]
   (->> env
        (flatten)
@@ -614,6 +810,7 @@
   (if (empty? args)
     (str "run(" n ")")
     (str "run(" n ","  (apply str (interpose \, args))")")))
+
 (declare destructure-arguments)
 
 (defn destructure-nth-rest [parent pos]
@@ -637,7 +834,6 @@
       'byte       (str "byte " name " = " "number::to<byte>(" value ")")
       'c_str      (str "var " name "_packed = string::pack(" value ");\n"
                        "char* " name " = " "string::c_str(" name "_packed)")
-      'matrix     (str "matrix &" name " = " "value<matrix>::to_reference(" value ")")
       (str "ref " name " = " value))))
 
 (defn new-fn-var-arg [name parent pos]
@@ -655,7 +851,7 @@
                   (symbol? name)
                   (new-fn-arg name parent pos)
 
-                  (parser/form? 'fir_destructure_associative name)
+                  (form? 'fir_destructure_associative name)
                   (let [[_ & args ] name
                         args (->> args
                                   (partition 2)
@@ -688,13 +884,12 @@
          args           (take-while #(and (not= % '&) (not= % :as)) t-args)
          var-args       (->> t-args (drop-while #(not= % '&)) second)
          as-arg         (->> t-args (drop-while #(not= % :as)) second)
-         args-indexed   (->>  args
-                              (map-indexed (fn [p v] [p v]))
-                              (filter #(not= (second %) '_)))
+         args-indexed   (->> args (map-indexed (fn [p v] [p v])) (filter #(not= (second %) '_)))
          as-arg         (destructure-as-arg as-arg parent)
          var-args       (destructure-var-args var-args parent (count args))
          args           (destructure-sequential args-indexed parent)]
      [args var-args as-arg])))
+
 (defmethod emit :invoke-fn [options [fn & args] state]
   (invoke-fn (emit options fn state) (emit-ast options args state)))
 
@@ -705,17 +900,17 @@
   (new-fn-stack f))
 
 (defn emit-lambda [options name env args body state]
-  (let [native-declarations (filter (parser/form? 'native_declare) body)
+  (let [native-declarations (filter (form? 'native_declare) body)
         return (fn [b] (conj (pop b) (str "return " (last b))))
-        body (filter #(not (parser/form? 'native_declare %)) body)
+        body (filter #(not (form? 'native_declare %)) body)
         body (cond  (empty? body)
                     ["return nil()"]
                     ;; multi arity dispacth
-                    (parser/form? 'fir_defn_arity (first body))
+                    (form? 'fir_defn_arity (first body))
                     (return
                      (emit options (first body) state))
                     ;; ffi call
-                    (parser/ffi-fn? body)
+                    (ffi-fn? body)
                     (let [buffer (StringBuilder.)]
                       (doseq [b body]
                         (.append buffer b))
@@ -740,6 +935,7 @@
 (defmethod emit 'fir_defn_stack [options [_ name env args & body] state]
   (append-to! state [:lambdas] (-> (emit-lambda options name env args body state)
                                    (assoc :stack true))))
+
 (defmethod emit 'fir_defn_arity [_ [_ switch default] state]
   (let [default (if default
                   (str (new-fn-stack default) ".invoke(_args_)")
@@ -752,6 +948,7 @@
                   }"
                  :fns (map (fn [[s f]] {:fn (new-fn-stack f) :case s}) switch))]
     [switch default]))
+
 (defn lambda-definitions [fns]
   (render-template
    "$fns: {fn|
@@ -782,35 +979,36 @@
       }
      };separator=\"\n\n\"$"
    :fns fns))
+
 (defn program-template [source options]
   (let [{:keys [body lambdas symbol-table native-headers objects
                 native-declarations native-defines]} source
         native-headers (->> native-headers flatten (into #{}))
         file-ns        (-> options :base-name escape-cpp-symbol)
         main           (render-template
-                        (io/read-file "main.cpp")
+                        (read-file "main.cpp")
                         :file       file-ns)]
     (render-template
      "
         $native_defines:{$it$} ;separator=\"\n\"$
         $native_headers:{#include \"$it$\"} ;separator=\"\n\"$
 
-        #ifndef FERRET_RUNTIME_H
-        #define FERRET_RUNTIME_H
-         $ferret_h$
+        #ifndef ERMINE_RUNTIME_H
+        #define ERMINE_RUNTIME_H
+         $ermine_h$
         #endif
 
         // Objects
-        namespace ferret{
+        namespace ermine{
          $objects:{$it$} ;separator=\"\n\"$
         }
 
         // Symbols
         namespace $file${
-         using namespace ferret;
+         using namespace ermine;
 
          #if defined(ARDUINO)
-           typedef ferret::boolean boolean;
+           typedef ermine::boolean boolean;
          #endif
 
          $symbols:{var $it$;} ;separator=\"\n\"$
@@ -819,9 +1017,9 @@
         $native_declarations:{$it$} ;separator=\"\n\"$
 
         // Runtime Implementations
-        #ifndef FERRET_RUNTIME_CPP
-        #define FERRET_RUNTIME_CPP
-         $ferret_cpp$
+        #ifndef ERMINE_RUNTIME_CPP
+        #define ERMINE_RUNTIME_CPP
+         $ermine_cpp$
         #endif
 
         // Lambda Prototypes
@@ -830,10 +1028,10 @@
         }
 
         // Command Line Arguments
-        #if defined(FERRET_STD_LIB) &&               \\
-            !defined(FERRET_DISABLE_CLI_ARGS) &&     \\
-            !defined(FERRET_DISABLE_STD_MAIN)
-          ferret::var _star_command_line_args_star_;
+        #if defined(ERMINE_STD_LIB) &&               \\
+            !defined(ERMINE_DISABLE_CLI_ARGS) &&     \\
+            !defined(ERMINE_DISABLE_STD_MAIN)
+          ermine::var _star_command_line_args_star_;
         #endif
 
         // Lambda Implementations
@@ -848,42 +1046,25 @@
          }
         }
 
-        $ferret_main$"
+        $ermine_main$"
      :file                 file-ns
      :native_defines       native-defines
-     :ferret_h             (io/read-file "runtime.h")
+     :ermine_h             (read-file "runtime.h")
      :native_headers       native-headers
      :objects              objects
      :symbols              symbol-table
      :native_declarations  native-declarations
-     :ferret_cpp           (io/read-file "runtime.cpp")
+     :ermine_cpp           (read-file "runtime.cpp")
      :lambda_classes       (lambda-definitions lambdas)
      :lambda_bodies        (lambda-implementations lambdas)
      :body                 (filter #(not (empty? %)) body)
-     :ferret_main          main)))
-(defn checkout-deps [path]
-  (when (io/file-exists (str path "/deps.clj"))
-    (let [deps (-> (read-clojure-file "deps.clj")
-                   (parser/peek (parser/form? 'git)))
-          deps (map (fn [[_ & kvs]] (apply hash-map kvs)) deps)]
-      (doseq [{url :url commit :commit} deps]
-        (let [folder (str path (jgit-util/name-from-uri url))]
-          (info "dep =>" url)
-          (when (io/file-exists folder)
-            (org.apache.commons.io.FileUtils/deleteDirectory
-             (java.io.File. folder)))
-          (let [repo (jgit/git-clone-full
-                      url (org.apache.commons.io.FilenameUtils/normalize folder))]
-            (jgit/git-checkout (:repo repo)
-                               (if commit
-                                 commit
-                                 "master"))))))))
+     :ermine_main          main)))
+
 (defn compile-options [& [options]]
   (merge {:compiler "g++"
           :compiler-options ["-std=c++11"]
-          :source-extension io/extension-cpp
-          :base-name "solution"
-          :binary-file "solution"}
+          :source-extension extension-cpp
+          :base-name "solution"}
          options))
 
 (defn file-name [options]
@@ -891,6 +1072,7 @@
 
 (defn cpp-file-name [options]
   (str (:output-path options) (file-name options)))
+
 (defn compile-options-parse-source [file]
   (try
     (let [program (slurp file)
@@ -917,6 +1099,7 @@
                  (assoc h v (combine v))) {} keys)))
     (catch Exception e
       (compile-options {}))))
+
 (defn build-specs [input args]
   (fn []
     (let [args             (fn [k]
@@ -924,16 +1107,13 @@
           output           (if (args :output)
                              (args :output)
                              input)
-          output-path      (io/file-path output)
+          output-path      (file-path output)
           output-extension (if (args :output) 
-                             (io/file-extension (args :output))
-                             io/extension-cpp)
-          base-name        (io/file-base-name output)
-          input-path       (io/file-path input)
-          output-file      (io/make-file output-path base-name output-extension)
-          binary-file      (if (args :binary) 
-                             (args :binary)
-                             base-name)
+                             (file-extension (args :output))
+                             extension-cpp)
+          base-name        (file-base-name output)
+          input-path       (file-path input)
+          output-file      (make-file output-path base-name output-extension)
           default-options  (compile-options-parse-source output-file)]
       (-> default-options
           (assoc :input-file         input)
@@ -941,11 +1121,7 @@
           (assoc :path               input-path)
           (assoc :output-path        output-path)
           (assoc :source-extension   output-extension)
-          (assoc :binary-file        binary-file)
           (assoc :ast                (args :ast))
-          (assoc :compile-program    (args :compile))
-          (assoc :release            (args :release))
-          (assoc :format-code        (not (args :disable-formatting)))
           (assoc :global-functions   (args :global-functions))
           (assoc :extra-source-files
                  (cond (not (empty? (:arguments args)))
@@ -953,124 +1129,37 @@
                        (not (empty? (:extra-source-files default-options)))
                        (:extra-source-files default-options)
                        :default []))))))
+
 (defn compile->cpp [form options]
   (let [file-name (cpp-file-name options)
         source    (emit-source form options)
         program   (program-template source options)]
-    (io/write-to-file file-name program)
-    (info "compiled" "=>" file-name)
+    (write-to-file file-name program)
     true))
-(defn cxx-compiler [options]
-  (let [compiler    (if (System/getenv "CXX")
-                      (System/getenv "CXX")
-                      (:compiler options))
-        env-options (if (System/getenv "CXXFLAGS")
-                      (seq (.split (System/getenv "CXXFLAGS") " ")))
-        options     (->> (:compiler-options options) (map str))]
-    [compiler (concat options env-options)]))
-(defn cxx-command [options]
-  (if (:command options)
-    (flatten ["/usr/bin/env" "sh" "-c" (:command options)])
-    (let [[cxx cxx-options] (cxx-compiler options)
-          source-files  (map #(let [extension (io/file-extension %)]
-                                [(cond (= extension "c") ["-x" "c"]
-                                       (= extension "c++") ["-x" "c++"]
-                                       :default "")
-                                 %])
-                             (:extra-source-files options))]
-      (flatten [cxx cxx-options source-files
-                ["-x" "c++"] (file-name options)
-                ["-o" (:binary-file options)]]))))
-(defn compile->binary [options]
-  (let [command (cxx-command options)]
-    (info "building" "=>" (apply str (interpose " " command)))
-    (let [build-dir (:output-path options)
-          ret (try
-                (with-sh-dir build-dir
-                  (apply sh command))
-                (catch Exception e
-                  (warn (str "error executing C++ compiler."))
-                  (warn (str "" (.getMessage e)))
-                  (io/exit-failure)))]
-      (if (not= 0 (:exit ret))
-        (do (warn "build error")
-            (warn (:err ret))
-            (io/exit-failure)))
-      true)))
-(defn clang-format [options]
-  (let [file (cpp-file-name options)
-        source (try (with-sh-dir "./"
-                      (sh "clang-format" "-style" "{Standard: Cpp11}" file))
-                    (catch Exception e nil))]
-    (if source
-      (do (info "formatting code")
-          (io/write-to-file file (:out source))))))
 
 (defn build-solution [spec-fn]
-  (let [{:keys [input-file compile-program format-code path]} (spec-fn)]
-    (info "dir =>" path)
-    (info "file =>" input-file)
+  (let [{:keys [input-file path]} (spec-fn)]
 
-    (compile->cpp (read-clojure-file input-file) (spec-fn))
+    (compile->cpp (read-clojure-file input-file) (spec-fn))))
 
-    (when format-code
-      (clang-format (spec-fn)))
-
-    (when compile-program
-      (compile->binary (spec-fn)))))
 (def program-options
   [["-i" "--input FILE"         "Input File" :default "./core.clj"]
    ["-o" "--output FILE"        "Output C++ File"]
-   ["-b" "--binary FILE"        "Output Binary File"]
-   ["-c" "--compile"            "Compile to Binary"]
-   [nil  "--deps"               "Checkout Input Dependencies"]
-   ["-w" "--watch-input"        "Automatically Recompile Input File on Change"]
-   [nil  "--release"            "Compile in Release Mode. Strip Debug Information"]
-   [nil  "--disable-formatting" "Disables Output File Formatting Using clang-format"]
    [nil  "--global-functions"   "Disables inline-global-fns Optimization"]
-   [nil  "--ast"                "Print Intermediate AST"]
-   [nil  "--silent"             "Silent or quiet mode"]
-   ["-h" "--help"               "Print Help"]])
+   [nil  "--ast"                "Print Intermediate AST"]])
+
 (defn -main [& args]
   (try
     (let [args (parse-opts args program-options)
-          {:keys [help input deps watch-input silent]} (:options args)]
+          {:keys [input]} (:options args)]
 
-      (when help
-        (try
-          (let [version (io/read-file "build.info")]
-            (print "ferret-lisp" version))
-          (catch Exception e
-            (print "ferret-lisp")))
-        (println )
-        (println )
-        (println (:summary args))
-        (io/exit-success))
-
-      (when silent
-        (System/setProperty "org.slf4j.simpleLogger.defaultLogLevel" "warn"))
-
-      (when (not (io/file-exists input))
-        (warn "no input file")
-        (io/exit-failure))
+      (when (not (file-exists input))
+        #_(warn "no input file")
+        (exit-failure))
 
       (let [specs (build-specs input args)]
 
-        (when deps
-          (try
-            (checkout-deps (:path (specs)))
-            (catch Exception e
-              (io/exit-failure)))
-          (io/exit-success))
-
-        (if (not watch-input)
-          (build-solution specs)
-          (do (watcher/watcher [input]
-                               (watcher/rate 1000)
-                               (watcher/on-change
-                                (fn [_] (build-solution specs))))
-              @(promise)))
-        (shutdown-agents))
-      (io/exit-success))
+        (build-solution specs))
+      (exit-success))
     (catch Exception e
       (stacktrace/print-stack-trace e 10))))

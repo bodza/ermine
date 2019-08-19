@@ -5,7 +5,7 @@ class seekable_i {
     virtual var first() = 0;
     virtual var rest() = 0;
 
-#if !defined(FERRET_DISABLE_STD_OUT)
+#if !defined(ERMINE_DISABLE_STD_OUT)
     static void stream_console(ref coll) {
       var tail = rt::rest(coll);
 

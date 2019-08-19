@@ -1,15 +1,15 @@
-#if !defined(FERRET_SAFE_MODE)
+#if !defined(ERMINE_SAFE_MODE)
 class fn_throttler : public lambda_i {
   var fn;
   elapsed_micros timer;
   real_t rate;
   bool blocking;
 
-#if defined(FERRET_HARDWARE_ARDUINO)
+#if defined(ERMINE_HARDWARE_ARDUINO)
   inline void _wait(real_t t) const{
     ::delayMicroseconds((number_t)t);
   }
-#elif defined(FERRET_STD_LIB)
+#elif defined(ERMINE_STD_LIB)
   inline void _wait(real_t t) const{
     auto duration = ::std::chrono::microseconds((number_t)t);
     ::std::this_thread::sleep_for(duration);

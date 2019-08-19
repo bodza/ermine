@@ -8,7 +8,7 @@ public:
     return (value == o.cast<boolean>()->container());
   }
 
-#if !defined(FERRET_DISABLE_STD_OUT)
+#if !defined(ERMINE_DISABLE_STD_OUT)
   void stream_console() const final {
     if (value)
       rt::print("true");
@@ -25,8 +25,8 @@ public:
 };
 
 namespace cached{
-  const var true_o = obj<::ferret::boolean>(true);
-  const var false_o = obj<::ferret::boolean>(false);
+  const var true_o = obj<::ermine::boolean>(true);
+  const var false_o = obj<::ermine::boolean>(false);
 }
 
 var::operator bool() const {

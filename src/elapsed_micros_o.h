@@ -1,13 +1,13 @@
-#if !defined(FERRET_SAFE_MODE)
+#if !defined(ERMINE_SAFE_MODE)
 class elapsed_micros : public object {
   mutex lock;
   unsigned long us;
 
-#if defined(FERRET_HARDWARE_ARDUINO)
+#if defined(ERMINE_HARDWARE_ARDUINO)
   inline unsigned long now() const{
     return ::micros();
   }
-#elif defined(FERRET_STD_LIB)
+#elif defined(ERMINE_STD_LIB)
   inline unsigned long now() const{
     auto now = ::std::chrono::high_resolution_clock::now();
     auto epoch = now.time_since_epoch();
@@ -26,7 +26,7 @@ class elapsed_micros : public object {
 
   type_t type() const { return type_id<elapsed_micros>; }
 
-#if !defined(FERRET_DISABLE_STD_OUT)
+#if !defined(ERMINE_DISABLE_STD_OUT)
   void stream_console() const {
     rt::print("micros#");
     rt::print(elapsed());

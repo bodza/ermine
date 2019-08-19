@@ -16,7 +16,7 @@ public:
 
   type_t type() const final { return type_id<string>; }
 
-#if !defined(FERRET_DISABLE_STD_OUT)
+#if !defined(ERMINE_DISABLE_STD_OUT)
   void stream_console() const final {
     var packed = string::pack(var((object*)this));
     char* str = string::c_str(packed);
@@ -89,10 +89,10 @@ public:
   }
 };
 
-#ifdef FERRET_STD_LIB
+#ifdef ERMINE_STD_LIB
 template<>
 inline var obj<string>(std::string s) {
-  void * storage = FERRET_ALLOCATOR::allocate<string>();
+  void * storage = ERMINE_ALLOCATOR::allocate<string>();
   return var(new(storage) string(s.c_str(), (number_t)s.size()));
 }
 
@@ -102,10 +102,10 @@ template <> ::std::string string::to(ref str) {
 }
 #endif
 
-#ifdef FERRET_HARDWARE_ARDUINO
+#ifdef ERMINE_HARDWARE_ARDUINO
 template<>
 inline var obj<string>(String s) {
-  void * storage = FERRET_ALLOCATOR::allocate<string>();
+  void * storage = ERMINE_ALLOCATOR::allocate<string>();
   return var(new(storage) string(s.c_str(), (number_t)s.length()));
 }
 

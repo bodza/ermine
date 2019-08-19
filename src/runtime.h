@@ -1,37 +1,37 @@
 // Detect Hardware
-# define FERRET_CONFIG_SAFE_MODE TRUE
+# define ERMINE_CONFIG_SAFE_MODE TRUE
 
-#if !defined(FERRET_SAFE_MODE)
+#if !defined(ERMINE_SAFE_MODE)
   #if defined(__APPLE__) ||                       \
     defined(_WIN32) ||                            \
     defined(__linux__) ||                         \
     defined(__unix__) ||                          \
     defined(_POSIX_VERSION)
 
-    # undef  FERRET_CONFIG_SAFE_MODE
-    # define FERRET_STD_LIB TRUE
+    # undef  ERMINE_CONFIG_SAFE_MODE
+    # define ERMINE_STD_LIB TRUE
   #endif
 
   #if defined(ARDUINO)
 
-    # define FERRET_HARDWARE_ARDUINO TRUE
+    # define ERMINE_HARDWARE_ARDUINO TRUE
 
-    #if !defined(FERRET_HARDWARE_ARDUINO_UART_PORT)
-      # define FERRET_HARDWARE_ARDUINO_UART_PORT Serial
+    #if !defined(ERMINE_HARDWARE_ARDUINO_UART_PORT)
+      # define ERMINE_HARDWARE_ARDUINO_UART_PORT Serial
     #endif
   #endif
 
-  #if defined(FERRET_HARDWARE_ARDUINO)
-    # undef  FERRET_CONFIG_SAFE_MODE
-    # define FERRET_DISABLE_STD_MAIN TRUE
+  #if defined(ERMINE_HARDWARE_ARDUINO)
+    # undef  ERMINE_CONFIG_SAFE_MODE
+    # define ERMINE_DISABLE_STD_MAIN TRUE
   #endif
 #endif
 
-#if defined(FERRET_CONFIG_SAFE_MODE)
-  # define FERRET_DISABLE_MULTI_THREADING TRUE
-  # define FERRET_DISABLE_STD_OUT TRUE
+#if defined(ERMINE_CONFIG_SAFE_MODE)
+  # define ERMINE_DISABLE_MULTI_THREADING TRUE
+  # define ERMINE_DISABLE_STD_OUT TRUE
 #endif
-#ifdef FERRET_STD_LIB
+#ifdef ERMINE_STD_LIB
  #include <iostream>
  #include <iomanip>
  #include <sstream>
@@ -48,21 +48,21 @@
  #include <future>
 #endif
 
-#ifdef FERRET_HARDWARE_ARDUINO
+#ifdef ERMINE_HARDWARE_ARDUINO
  #include <Arduino.h>
  #include <stdio.h>
  #include <stdlib.h>
  #include <stdint.h>
 #endif
 
-#ifdef FERRET_CONFIG_SAFE_MODE
+#ifdef ERMINE_CONFIG_SAFE_MODE
  #include <stdio.h>
  #include <stdlib.h>
  #include <stdint.h>
  #include <math.h>
 #endif
 
-namespace ferret{
+namespace ermine{
   namespace runtime {}
   namespace rt = runtime;
   // Types
@@ -180,14 +180,14 @@ namespace ferret{
   };
   #pragma pack(pop)
   // Concurrency
-  #if defined(FERRET_DISABLE_MULTI_THREADING)
+  #if defined(ERMINE_DISABLE_MULTI_THREADING)
     class mutex {
     public:
       void lock()   {} 
       void unlock() {} 
     };
   #else
-    #if defined(FERRET_STD_LIB)
+    #if defined(ERMINE_STD_LIB)
       class mutex {
         ::std::mutex m;
       public:
@@ -196,7 +196,7 @@ namespace ferret{
       };
     #endif
   
-    #if defined(FERRET_HARDWARE_ARDUINO)
+    #if defined(ERMINE_HARDWARE_ARDUINO)
       class mutex {
       public:
         void lock()   { noInterrupts(); } 
@@ -215,14 +215,14 @@ namespace ferret{
   // Containers
   #undef bit
   
-  #if !defined(FERRET_BITSET_WORD_TYPE)
-    #define FERRET_BITSET_WORD_TYPE unsigned int
+  #if !defined(ERMINE_BITSET_WORD_TYPE)
+    #define ERMINE_BITSET_WORD_TYPE unsigned int
     #if defined(__clang__) || defined(__GNUG__)
-      #define FERRET_BITSET_USE_COMPILER_INTRINSICS true
+      #define ERMINE_BITSET_USE_COMPILER_INTRINSICS true
     #endif
   #endif
   
-  template<size_t S, typename word_t = FERRET_BITSET_WORD_TYPE>
+  template<size_t S, typename word_t = ERMINE_BITSET_WORD_TYPE>
   class bitset {
     static const size_t bits_per_word = sizeof(word_t) * 8;
     static const size_t n_words = S / bits_per_word;
@@ -299,7 +299,7 @@ namespace ferret{
     }
   
     inline size_t ffs(size_t b = 0, size_t e = S) const {
-  #if defined(FERRET_BITSET_USE_COMPILER_INTRINSICS)
+  #if defined(ERMINE_BITSET_USE_COMPILER_INTRINSICS)
         // search first word
         size_t word_ptr = word(b);
         word_t this_word = bits[word_ptr];
@@ -327,7 +327,7 @@ namespace ferret{
     }
   
     inline size_t ffr(size_t b = 0, size_t e = S) const {
-  #if defined(FERRET_BITSET_USE_COMPILER_INTRINSICS)
+  #if defined(ERMINE_BITSET_USE_COMPILER_INTRINSICS)
         // same as ffs but complements word before counting
         size_t word_ptr = word(b);
         word_t this_word = ~bits[word_ptr];
@@ -362,7 +362,7 @@ namespace ferret{
       return  (word_t)(x << p);
     }
   
-  #if defined(FERRET_STD_LIB)
+  #if defined(ERMINE_STD_LIB)
     friend std::ostream& operator<< (std::ostream& stream, bitset& x) {
       for(size_t i = 0; i < S; i++)
         stream << x.test(i);
@@ -373,7 +373,7 @@ namespace ferret{
 }
 
 // Math
-namespace ferret{
+namespace ermine{
   constexpr auto operator "" _MB( unsigned long long const x ) -> long {
     return 1024L * 1024L * (long)x;
   }
@@ -473,7 +473,7 @@ namespace ferret{
     friend bool operator>= (const fixed& x, const fixed& y) { return x.m >= y.m; }
     friend bool operator<= (const fixed& x, const fixed& y) { return x.m <= y.m; }
   
-  #if defined(FERRET_STD_LIB)
+  #if defined(ERMINE_STD_LIB)
     friend std::ostream& operator<< (std::ostream& stream, const fixed& x) {
       stream << (double)x;
       return stream;
@@ -481,26 +481,26 @@ namespace ferret{
   #endif
   };
   #pragma pack(pop)
-  #if !defined(FERRET_NUMBER_TYPE)
-     #define FERRET_NUMBER_TYPE int
+  #if !defined(ERMINE_NUMBER_TYPE)
+     #define ERMINE_NUMBER_TYPE int
   #endif
   
-  #if !defined(FERRET_REAL_TYPE)
-     #define FERRET_REAL_TYPE   double
+  #if !defined(ERMINE_REAL_TYPE)
+     #define ERMINE_REAL_TYPE   double
   #endif
   
-  #if !defined(FERRET_REAL_EPSILON)
-     #define FERRET_REAL_EPSILON   0.0001
+  #if !defined(ERMINE_REAL_EPSILON)
+     #define ERMINE_REAL_EPSILON   0.0001
   #endif
   
     int req_real_precision(double t) {
       return ((-1 * (int)log10(t)));
     }
   
-    typedef FERRET_NUMBER_TYPE  number_t;                   // Whole number Container.
-    typedef FERRET_REAL_TYPE    real_t;                     // Real number Container.
-    const   real_t              real_epsilon(FERRET_REAL_EPSILON);
-    const   int                 real_precision = req_real_precision(FERRET_REAL_EPSILON);
+    typedef ERMINE_NUMBER_TYPE  number_t;                   // Whole number Container.
+    typedef ERMINE_REAL_TYPE    real_t;                     // Real number Container.
+    const   real_t              real_epsilon(ERMINE_REAL_EPSILON);
+    const   int                 real_precision = req_real_precision(ERMINE_REAL_EPSILON);
   namespace runtime{
     #undef min
     #undef max
@@ -534,14 +534,14 @@ namespace ferret{
 }
 
 // Initialize Hardware
-namespace ferret{
-  #if !defined(FERRET_UART_RATE)
-    # define FERRET_UART_RATE 9600
+namespace ermine{
+  #if !defined(ERMINE_UART_RATE)
+    # define ERMINE_UART_RATE 9600
   #endif
-  #if !defined(FERRET_IO_STREAM_SIZE)
-    # define FERRET_IO_STREAM_SIZE 80
+  #if !defined(ERMINE_IO_STREAM_SIZE)
+    # define ERMINE_IO_STREAM_SIZE 80
   #endif
-  #if defined(FERRET_DISABLE_STD_OUT)
+  #if defined(ERMINE_DISABLE_STD_OUT)
      namespace runtime{
        void init(){ }
   
@@ -549,7 +549,7 @@ namespace ferret{
        void print(T){ }
      }
   #endif
-  #if defined(FERRET_STD_LIB) && !defined(FERRET_DISABLE_STD_OUT)
+  #if defined(ERMINE_STD_LIB) && !defined(ERMINE_DISABLE_STD_OUT)
     namespace runtime{
       void init(){}
   
@@ -566,41 +566,41 @@ namespace ferret{
       }
     }
   #endif
-  #if defined(FERRET_HARDWARE_ARDUINO) && !defined(FERRET_DISABLE_STD_OUT) 
+  #if defined(ERMINE_HARDWARE_ARDUINO) && !defined(ERMINE_DISABLE_STD_OUT) 
     namespace runtime{
-      void init(){ FERRET_HARDWARE_ARDUINO_UART_PORT.begin(FERRET_UART_RATE); }
+      void init(){ ERMINE_HARDWARE_ARDUINO_UART_PORT.begin(ERMINE_UART_RATE); }
   
       template <typename T>
-      void print(const T t){ FERRET_HARDWARE_ARDUINO_UART_PORT.print(t); }
+      void print(const T t){ ERMINE_HARDWARE_ARDUINO_UART_PORT.print(t); }
   
       template <>
       // cppcheck-suppress passedByValue
       void print(const real_t d){
-        FERRET_HARDWARE_ARDUINO_UART_PORT.print(double(d), real_precision);
+        ERMINE_HARDWARE_ARDUINO_UART_PORT.print(double(d), real_precision);
       }
   
       template <>
       void print(void *p){
-        FERRET_HARDWARE_ARDUINO_UART_PORT.print((size_t)p,HEX);
+        ERMINE_HARDWARE_ARDUINO_UART_PORT.print((size_t)p,HEX);
       }
   
       template <> void print(const void * const p){
-        FERRET_HARDWARE_ARDUINO_UART_PORT.print((size_t)p, HEX);
+        ERMINE_HARDWARE_ARDUINO_UART_PORT.print((size_t)p, HEX);
       }
   
       void read_line(char *buff, size_t len){
         byte idx = 0;
         char c;
         do{
-          while (FERRET_HARDWARE_ARDUINO_UART_PORT.available() == 0);
-          c = FERRET_HARDWARE_ARDUINO_UART_PORT.read();
+          while (ERMINE_HARDWARE_ARDUINO_UART_PORT.available() == 0);
+          c = ERMINE_HARDWARE_ARDUINO_UART_PORT.read();
           buff[idx++] = c;
         }while (c != '\n');
         buff[--idx] = 0x00;
       }
      }
   #endif
-  #if !defined(FERRET_DISABLE_STD_OUT)
+  #if !defined(ERMINE_DISABLE_STD_OUT)
      namespace runtime{
        template <typename T>
        void println(T t){
@@ -612,7 +612,7 @@ namespace ferret{
 }
 
 // Object System Base
-namespace ferret{
+namespace ermine{
   namespace memory {
     template <typename T>
     class pointer{
@@ -659,11 +659,11 @@ namespace ferret{
       return rt::max(sizeof(Ts)...);
     }
   }
-  #ifdef FERRET_MEMORY_POOL_SIZE
+  #ifdef ERMINE_MEMORY_POOL_SIZE
   namespace memory{
     namespace allocator{
       template<typename page_t, size_t pool_size,
-               typename bitset_word_t = FERRET_BITSET_WORD_TYPE>
+               typename bitset_word_t = ERMINE_BITSET_WORD_TYPE>
       struct memory_pool {
         bitset<pool_size, bitset_word_t> used;
         page_t pool[pool_size];
@@ -713,18 +713,18 @@ namespace ferret{
     }
   }
   #endif
-  #if defined(FERRET_MEMORY_POOL_SIZE) && !defined(FERRET_ALLOCATOR)
+  #if defined(ERMINE_MEMORY_POOL_SIZE) && !defined(ERMINE_ALLOCATOR)
   
-   #define FERRET_ALLOCATOR memory::allocator::pool
+   #define ERMINE_ALLOCATOR memory::allocator::pool
   
-   #if !defined(FERRET_MEMORY_POOL_PAGE_TYPE)
-    #define FERRET_MEMORY_POOL_PAGE_TYPE size_t
+   #if !defined(ERMINE_MEMORY_POOL_PAGE_TYPE)
+    #define ERMINE_MEMORY_POOL_PAGE_TYPE size_t
    #endif
   
   namespace memory{
     namespace allocator{
   
-      memory_pool<FERRET_MEMORY_POOL_PAGE_TYPE, FERRET_MEMORY_POOL_SIZE> program_memory;
+      memory_pool<ERMINE_MEMORY_POOL_PAGE_TYPE, ERMINE_MEMORY_POOL_SIZE> program_memory;
   
       class pool{
       public:
@@ -743,10 +743,10 @@ namespace ferret{
     }
   }
   #endif
-  #ifdef FERRET_MEMORY_BOEHM_GC
+  #ifdef ERMINE_MEMORY_BOEHM_GC
   
-  #define FERRET_ALLOCATOR memory::allocator::gc
-  #define FERRET_DISABLE_RC true
+  #define ERMINE_ALLOCATOR memory::allocator::gc
+  #define ERMINE_DISABLE_RC true
   
   #include <gc.h>
   
@@ -759,7 +759,7 @@ namespace ferret{
         static void init(){ GC_INIT(); }
   
         static inline void* allocate(size_t s){
-  #ifdef FERRET_DISABLE_MULTI_THREADING
+  #ifdef ERMINE_DISABLE_MULTI_THREADING
           return GC_MALLOC(s);
   #else
           return GC_MALLOC_ATOMIC(s);
@@ -774,9 +774,9 @@ namespace ferret{
     }
   }
   #endif
-  #if !defined(FERRET_ALLOCATOR)
+  #if !defined(ERMINE_ALLOCATOR)
   
-  #define FERRET_ALLOCATOR memory::allocator::system
+  #define ERMINE_ALLOCATOR memory::allocator::system
   
   namespace memory{
     namespace allocator{
@@ -802,11 +802,11 @@ namespace ferret{
         static mutex lock;
       public:
   
-        static void init(){ FERRET_ALLOCATOR::init(); }
+        static void init(){ ERMINE_ALLOCATOR::init(); }
   
         static inline void* allocate(size_t s){
           lock_guard guard(lock);
-          return FERRET_ALLOCATOR::allocate(s);
+          return ERMINE_ALLOCATOR::allocate(s);
         }
   
         template<typename FT>
@@ -814,31 +814,31 @@ namespace ferret{
   
         static inline void  free(void * ptr){
           lock_guard guard(lock);
-          FERRET_ALLOCATOR::free(ptr);
+          ERMINE_ALLOCATOR::free(ptr);
         }
       };
     }
   }
-  #if  !defined(FERRET_DISABLE_MULTI_THREADING)
+  #if  !defined(ERMINE_DISABLE_MULTI_THREADING)
   
-    #if defined(FERRET_MEMORY_POOL_SIZE) || defined(FERRET_HARDWARE_ARDUINO)
+    #if defined(ERMINE_MEMORY_POOL_SIZE) || defined(ERMINE_HARDWARE_ARDUINO)
       mutex memory::allocator::synchronized::lock;
-      #undef  FERRET_ALLOCATOR
-      #define FERRET_ALLOCATOR memory::allocator::synchronized
+      #undef  ERMINE_ALLOCATOR
+      #define ERMINE_ALLOCATOR memory::allocator::synchronized
     #endif
   
   #endif
-  #if !defined(FERRET_RC_POLICY)
+  #if !defined(ERMINE_RC_POLICY)
   namespace memory {
     namespace gc {
   
-  #if !defined(FERRET_RC_TYPE)
-    #define FERRET_RC_TYPE unsigned int
+  #if !defined(ERMINE_RC_TYPE)
+    #define ERMINE_RC_TYPE unsigned int
   #endif
   
-  #if defined(FERRET_DISABLE_RC)
+  #if defined(ERMINE_DISABLE_RC)
   
-  #define FERRET_RC_POLICY memory::gc::no_rc
+  #define ERMINE_RC_POLICY memory::gc::no_rc
   
       class no_rc{
       public:
@@ -861,12 +861,12 @@ namespace ferret{
         T ref_count;
       };    
   
-      #if defined(FERRET_DISABLE_MULTI_THREADING) || !defined(FERRET_STD_LIB)
-        #define FERRET_RC_POLICY memory::gc::rc<FERRET_RC_TYPE>
+      #if defined(ERMINE_DISABLE_MULTI_THREADING) || !defined(ERMINE_STD_LIB)
+        #define ERMINE_RC_POLICY memory::gc::rc<ERMINE_RC_TYPE>
       #endif
   
-      #if defined(FERRET_STD_LIB) && !defined(FERRET_DISABLE_MULTI_THREADING)
-        #define FERRET_RC_POLICY memory::gc::rc<::std::atomic<FERRET_RC_TYPE>>
+      #if defined(ERMINE_STD_LIB) && !defined(ERMINE_DISABLE_MULTI_THREADING)
+        #define ERMINE_RC_POLICY memory::gc::rc<::std::atomic<ERMINE_RC_TYPE>>
       #endif
   #endif
     }
@@ -890,7 +890,7 @@ namespace ferret{
   
     virtual type_t type() const = 0;
   
-  #if !defined(FERRET_DISABLE_STD_OUT)
+  #if !defined(ERMINE_DISABLE_STD_OUT)
     virtual void stream_console() const {
       rt::print("var#");
       const void* addr = this;
@@ -903,15 +903,15 @@ namespace ferret{
     virtual seekable_i* cast_seekable_i() { return nullptr; }
   
     void* operator new(size_t, void* ptr){ return ptr; }
-    void  operator delete(void * ptr){ FERRET_ALLOCATOR::free(ptr); }
+    void  operator delete(void * ptr){ ERMINE_ALLOCATOR::free(ptr); }
   };
   
-  typedef object_i<FERRET_RC_POLICY> object;
-  #if !defined(FERRET_POINTER_T)
-    #define FERRET_POINTER_T memory::pointer<object>
+  typedef object_i<ERMINE_RC_POLICY> object;
+  #if !defined(ERMINE_POINTER_T)
+    #define ERMINE_POINTER_T memory::pointer<object>
   #endif
   
-  typedef FERRET_POINTER_T pointer_t;
+  typedef ERMINE_POINTER_T pointer_t;
   class var{
   public:
     explicit inline var(object* o = nullptr) : obj(o) { inc_ref(); }
@@ -947,7 +947,7 @@ namespace ferret{
   
     operator bool() const;
   
-  #if !defined(FERRET_DISABLE_STD_OUT)
+  #if !defined(ERMINE_DISABLE_STD_OUT)
     void stream_console() const {
       if (obj != nullptr )
         obj->stream_console();
@@ -977,14 +977,14 @@ namespace ferret{
     }
   
     inline void inc_ref(){
-  #if !defined(FERRET_DISABLE_RC)
+  #if !defined(ERMINE_DISABLE_RC)
       // Only change if non-null
       if (obj) obj->inc_ref();
   #endif
     }
   
     inline void dec_ref(){
-  #if !defined(FERRET_DISABLE_RC)
+  #if !defined(ERMINE_DISABLE_RC)
       // Only change if non-null
       if (obj){
         // Subtract and test if this was the last pointer.
@@ -1007,7 +1007,7 @@ namespace ferret{
     return (this == o.get());
   }
   
-  #ifdef FERRET_STD_LIB
+  #ifdef ERMINE_STD_LIB
   std::ostream &operator<<(std::ostream &os, var const &v) {
     v.stream_console();
     return os;
@@ -1015,7 +1015,7 @@ namespace ferret{
   #endif
   template<typename FT, typename... Args>
   inline var obj(Args... args) {
-    void * storage = FERRET_ALLOCATOR::allocate<FT>();
+    void * storage = ERMINE_ALLOCATOR::allocate<FT>();
     return var(new(storage) FT(args...));
   }
   
@@ -1043,7 +1043,7 @@ namespace ferret{
   
 }
 
-namespace ferret{
+namespace ermine{
   template <typename T>
   class array {
     size_t  _size{0};
@@ -1053,19 +1053,19 @@ namespace ferret{
     T* data {nullptr};
   
     explicit inline array(size_t s = 0) : _size(s) {
-      data = (T *)FERRET_ALLOCATOR::allocate(_size * sizeof(T));
+      data = (T *)ERMINE_ALLOCATOR::allocate(_size * sizeof(T));
     }
   
     explicit inline array(const T* source, size_t s = 0) : _size(s) {
-      data = (T *)FERRET_ALLOCATOR::allocate(_size * sizeof(T));
+      data = (T *)ERMINE_ALLOCATOR::allocate(_size * sizeof(T));
       for(size_t i = 0; i < _size; i++)
         data[i] = source[i];
     }
   
-  #if defined(FERRET_STD_LIB)
+  #if defined(ERMINE_STD_LIB)
     explicit inline array(std::initializer_list<T> source) :
       _size(source.size()) {
-      data = (T *)FERRET_ALLOCATOR::allocate(_size * sizeof(T));
+      data = (T *)ERMINE_ALLOCATOR::allocate(_size * sizeof(T));
       size_t idx = 0;
       for(auto item : source){  
         data[idx] = item;
@@ -1083,7 +1083,7 @@ namespace ferret{
     }
     
     ~array(){
-      FERRET_ALLOCATOR::free(data);
+      ERMINE_ALLOCATOR::free(data);
     }
   
   
@@ -1101,192 +1101,10 @@ namespace ferret{
     inline T*      end()   const { return &data[_size];  }
     inline size_t  size()  const { return _size;         }
   };
-  class matrix {
-    //row-major
-    array<real_t> data;
-    //shape
-    size_t  rows{0};
-    size_t  cols{0};
-  
-    inline static void into_aux(matrix &){ }
-  
-    template<typename... Args>
-    inline static void into_aux(matrix &m, real_t first, Args... rest){
-      m.data[m.data.size() - sizeof...(rest) - 1] = first;
-      into_aux(m, rest...);
-    }
-  
-  public:
-    inline matrix(size_t r = 0, size_t c = 0) :
-      data(r * c), rows(r) , cols(c) { }
-  
-    template<typename... Args>
-    inline matrix(size_t rows, size_t cols, Args... elements)
-      : matrix(rows,cols) {
-      into_aux(*this, elements...);
-    }
-  
-    inline matrix(matrix&& m) :
-      data(m.data), rows(m.rows), cols(m.cols) { }
-  
-    inline matrix(matrix& m)
-      : matrix(m.rows,m.cols){
-      for(size_t i = 0; i < data.size(); i++)
-        data[i] = m.data[i];
-    }
-  
-    inline matrix operator+ (const matrix& m) const {
-      matrix sum(rows,cols);
-      for(size_t i = 0; i < data.size(); i++)
-        sum.data[i] = data[i] + m.data[i];
-      return sum;
-    }
-  
-    inline matrix operator- (const matrix& m) const {
-      matrix diff(rows,cols);
-      for(size_t i = 0; i < data.size(); i++)
-        diff.data[i] = data[i] - m.data[i];
-      return diff;
-    }
-  
-    matrix operator* (const matrix& m) const {
-      matrix mul = matrix::zeros(rows, m.cols);
-  
-      if (cols != m.rows)
-        return mul;
-  
-      for (size_t i = 0; i < rows; i++) {
-        for (size_t j = 0; j < m.cols; j++) {
-          for (size_t k = 0; k < m.rows; k++) {
-            mul(i,j, mul(i,j) + operator()(i,k) * m(k,j));
-          }
-        }
-      }
-  
-      return mul;
-    }
-  
-    matrix operator* (const real_t& val) const {
-      matrix mul(rows,cols);
-      for(size_t i = 0; i < data.size(); i++)
-        mul.data[i] = data[i] * val;
-      return mul;
-    }
-  
-    inline real_t operator()(size_t row, size_t col) const {
-      return data[row * cols + col];
-    }
-  
-    inline void operator()(size_t row, size_t col, real_t val) {
-      data[row * cols + col] = val;
-    }
-  
-    inline matrix& operator=(matrix&& x){
-      data = array<real_t>(x.data);
-      rows = x.rows;
-      cols = x.cols;
-      return *this;
-    }
-  
-    inline bool operator ==(const matrix& m) const {
-      for (size_t i = 0; i < data.size(); i++)
-        if (data[i] != m.data[i])
-          return false;
-      return true;
-    }
-  
-  #if defined(FERRET_STD_LIB)
-    friend std::ostream& operator<< (std::ostream& stream, const matrix& x) {
-      stream << "[";
-      for (size_t r = 0; r < x.rows; r++){
-        stream << "[";
-        stream << x(r, 0);
-        for (size_t c = 1; c < x.cols; c++)
-          stream << " " << x(r,c);
-        stream << "]";
-      }
-      return stream << "]";
-    }
-  #endif
-  
-    inline static matrix empty(size_t r = 0, size_t c = 0) {
-      return matrix(r,c);
-    }
-  
-    inline static void fill(matrix& m, real_t val) {
-      for(size_t i = 0; i < m.data.size(); i++)
-        m.data[i] = val;
-    }
-    
-    inline static matrix zeros(size_t r = 0, size_t c = 0) {
-      matrix m(r,c);
-      fill(m, real_t(0));
-      return m;
-    }
-  
-    inline static matrix ones(size_t r = 0, size_t c = 0) {
-      matrix m(r,c);
-      fill(m, real_t(1));
-      return m;
-    }
-  
-    inline static matrix full(size_t r = 0, size_t c = 0, real_t v = real_t(0)) {
-      matrix m(r,c);
-      fill(m, v);
-      return m;
-    }
-  
-    static matrix eye(size_t n = 1){
-      matrix m = matrix::zeros(n,n);
-  
-      for(size_t r = 0; r < m.rows; r++)
-        m(r,r,real_t(1));
-  
-      return m;
-    }
-  
-    template<size_t rows, size_t cols, typename... Args>
-    inline static matrix into(Args... rest){
-      matrix m(rows, cols);
-      into_aux(m, rest...);
-      return m;
-    }
-  
-    inline static size_t row_count(const matrix& m){
-      return m.rows;
-    }
-  
-    inline static size_t column_count(const matrix& m){
-      return m.cols;
-    }
-  
-    static real_t norm_euclidean(const matrix& m){
-      real_t norm = real_t(0);
-  
-      for(size_t i = 0; i < m.data.size(); i++){
-        norm += m.data[i] * m.data[i];
-      }
-  
-      return real_t(sqrt((double)norm));
-    }
-  
-    static matrix normalise(const matrix& m){
-      real_t mag = matrix::norm_euclidean(m);
-      matrix norm = matrix::zeros(m.rows,m.cols);
-  
-      if (mag == real_t(0))
-        return norm;
-  
-      for(size_t i = 0; i < m.data.size(); i++)
-        norm.data[i] = m.data[i] / mag;
-  
-      return norm;
-    }
-  };
 }
 
 // Runtime Prototypes
-namespace ferret{
+namespace ermine{
     namespace runtime {
       var list(ref v);
       template <typename... Args>

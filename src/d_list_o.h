@@ -24,7 +24,7 @@ class d_list final : public lambda_i, public seekable_i {
 
   type_t type() const final { return type_id<d_list>; }
 
-#if !defined(FERRET_DISABLE_STD_OUT)
+#if !defined(ERMINE_DISABLE_STD_OUT)
   void stream_console() const final {
     data.stream_console();
   }
@@ -99,10 +99,10 @@ class d_list final : public lambda_i, public seekable_i {
 
 template<>
 inline var obj<d_list>(var keys, var vals) {
-  void * storage = FERRET_ALLOCATOR::allocate<d_list>();
+  void * storage = ERMINE_ALLOCATOR::allocate<d_list>();
   return var(new(storage) d_list(rt::cons(keys,vals)));
 }
 
-#if !defined(FERRET_MAP_TYPE)
+#if !defined(ERMINE_MAP_TYPE)
 typedef d_list map_t;
 #endif

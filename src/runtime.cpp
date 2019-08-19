@@ -1,4 +1,4 @@
-namespace ferret{
+namespace ermine{
   namespace runtime {
     inline bool is_seqable(ref coll){
       if(coll.cast<seekable_i>())

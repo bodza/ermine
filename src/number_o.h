@@ -8,7 +8,7 @@ public:
     return (rt::abs(n - number::to<real_t>(o)) < real_epsilon);
   }
 
-#if !defined(FERRET_DISABLE_STD_OUT)
+#if !defined(ERMINE_DISABLE_STD_OUT)
   void stream_console() const final {
     rt::print(n);
   }

@@ -1,4 +1,4 @@
-#ifdef FERRET_STD_LIB
+#ifdef ERMINE_STD_LIB
 class async final : public deref_i {
   mutex lock;
   bool cached;
@@ -18,7 +18,7 @@ class async final : public deref_i {
 
   type_t type() const final { return type_id<async>; }
 
-#if !defined(FERRET_DISABLE_STD_OUT)
+#if !defined(ERMINE_DISABLE_STD_OUT)
   void stream_console() const final {
     rt::print("future<");
     fn.stream_console();

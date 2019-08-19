@@ -11,7 +11,7 @@ public:
 
   bool equals(ref o) const final { return (hash == o.cast<keyword>()->hash); }
 
-#if !defined(FERRET_DISABLE_STD_OUT)
+#if !defined(ERMINE_DISABLE_STD_OUT)
   void stream_console() const final {
     rt::print("keyword#");
     rt::print(hash);

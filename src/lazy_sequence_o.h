@@ -23,7 +23,7 @@ public:
 
   type_t type() const final { return type_id<lazy_sequence>; }
 
-#if !defined(FERRET_DISABLE_STD_OUT)
+#if !defined(ERMINE_DISABLE_STD_OUT)
   void stream_console() const final {
     seekable_i::stream_console(var((object*)this));
   }

@@ -24,5 +24,3 @@ public:
     return v.cast<value<T>>()->to_reference();
   }  
 };
-
-typedef value<matrix> matrix_t;

@@ -6,7 +6,7 @@ class atomic final : public deref_i {
 
   type_t type() const final { return type_id<atomic>; }
 
-#if !defined(FERRET_DISABLE_STD_OUT)
+#if !defined(ERMINE_DISABLE_STD_OUT)
   void stream_console() const final {
     rt::print("atom<");
     data.stream_console();

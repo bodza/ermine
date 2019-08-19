@@ -478,13 +478,13 @@
 (defn thread [f]
   "return obj<async>(f);")
 (defnative get-char []
-  (on "defined FERRET_STD_LIB"
+  (on "defined ERMINE_STD_LIB"
       "return obj<number>(getchar());"))
 (defnative sleep [^number_t t]
-  (on "defined FERRET_STD_LIB"
+  (on "defined ERMINE_STD_LIB"
       "auto duration = ::std::chrono::milliseconds(t);
        ::std::this_thread::sleep_for(duration);")
-  (on "defined FERRET_HARDWARE_ARDUINO"
+  (on "defined ERMINE_HARDWARE_ARDUINO"
       "::delay(t);"))
 (defmacro doseq [binding & body]
   `(_doseq_ ~(second binding)
@@ -585,12 +585,12 @@
        (concat (flatten (first s)) (flatten (rest s)))
        (cons (first s) (flatten (rest s)))))))
 (defnative rand-aux []
-  (on "defined FERRET_STD_LIB"
+  (on "defined ERMINE_STD_LIB"
       ("random")
-      "::std::random_device ferret_random_device;
-       ::std::mt19937_64 ferret_random_generator(ferret_random_device());
-       ::std::uniform_real_distribution<ferret::real_t> ferret_random_distribution(0.0,1.0);"
-      "return obj<number>(ferret_random_distribution(ferret_random_generator));"))
+      "::std::random_device ermine_random_device;
+       ::std::mt19937_64 ermine_random_generator(ermine_random_device());
+       ::std::uniform_real_distribution<ermine::real_t> ermine_random_distribution(0.0,1.0);"
+      "return obj<number>(ermine_random_distribution(ermine_random_generator));"))
 
 (defn rand
   ([]
@@ -601,26 +601,26 @@
   [x]
   (floor (rand x)))
 (defnative millis []
-  (on "defined FERRET_STD_LIB"
+  (on "defined ERMINE_STD_LIB"
       "auto now = ::std::chrono::system_clock::now();
        auto epoch = now.time_since_epoch();
        auto time = ::std::chrono::duration_cast<::std::chrono::milliseconds>(epoch).count();
        return obj<number>(time);")
-  (on "defined FERRET_HARDWARE_ARDUINO"
+  (on "defined ERMINE_HARDWARE_ARDUINO"
       "return obj<number>(::millis());"))
 (defnative micros []
-  (on "defined FERRET_STD_LIB"
+  (on "defined ERMINE_STD_LIB"
       "auto now = ::std::chrono::high_resolution_clock::now();
        auto epoch = now.time_since_epoch();
        auto time = ::std::chrono::duration_cast<::std::chrono::microseconds>(epoch).count();
        return obj<number>(time);")
-  (on "defined FERRET_HARDWARE_ARDUINO"
+  (on "defined ERMINE_HARDWARE_ARDUINO"
       "return obj<number>(::micros());"))
 (defnative sleep-micros [^number_t t]
-  (on "defined FERRET_STD_LIB"
+  (on "defined ERMINE_STD_LIB"
       "auto duration = ::std::chrono::microseconds(t);
        ::std::this_thread::sleep_for(duration);")
-  (on "defined FERRET_HARDWARE_ARDUINO"
+  (on "defined ERMINE_HARDWARE_ARDUINO"
       "::delayMicroseconds(t);"))
 (defobject elapsed_micros "elapsed_micros_o.h")
 
@@ -656,7 +656,7 @@
       run(f);
       real_t elapsed = timer.elapsed() / real_t(1000.0);
 
-      #if defined(FERRET_BENCHMARK_VERBOSE)
+      #if defined(ERMINE_BENCHMARK_VERBOSE)
          rt::println(elapsed);
       #endif
 
@@ -757,7 +757,7 @@
 
    return obj<string>(s);")
 (defnative str-tok [str delimeter]
-  (on "defined FERRET_RUNTIME_H"
+  (on "defined ERMINE_RUNTIME_H"
       ("string.h")
       "var packed_delimeter = string::pack(delimeter);
        var packed_str = string::pack(str);
@@ -796,7 +796,7 @@
 (defmacro comment
   [& body])
 (defnative print [& more]
-  (on "!defined(FERRET_DISABLE_STD_OUT)"
+  (on "!defined(ERMINE_DISABLE_STD_OUT)"
       "if (more.is_nil())
          return nil();
        ref f = rt::first(more);
@@ -811,11 +811,11 @@
   (apply print more)
   (cxx "rt::print((char)0xA);"))
 (defn read-line []
-  "char buf[FERRET_IO_STREAM_SIZE] = {0};
-   rt::read_line(buf, FERRET_IO_STREAM_SIZE);
+  "char buf[ERMINE_IO_STREAM_SIZE] = {0};
+   rt::read_line(buf, ERMINE_IO_STREAM_SIZE);
    return obj<string>(buf);")
 (defnative slurp [^c_str f]
-  (on "defined FERRET_STD_LIB"
+  (on "defined ERMINE_STD_LIB"
       ("fstream")
       "std::ifstream ifs(f, std::ios::in | std::ios::binary | std::ios::ate);
 
@@ -833,7 +833,7 @@
 
        return obj<string>(data);"))
 (defnative sh [^c_str cmd]
-  (on "defined FERRET_STD_LIB"
+  (on "defined ERMINE_STD_LIB"
       ("memory")
       "::std::shared_ptr<FILE> pipe(popen(cmd, \"r\"), pclose);
        if (!pipe) 
@@ -845,7 +845,7 @@
          result += buffer;
        return obj<string>(result);"))
 (defnative lock-memory []
-  (on "defined FERRET_STD_LIB"
+  (on "defined ERMINE_STD_LIB"
       ("sys/mman.h")
       "mlockall(MCL_CURRENT | MCL_FUTURE);"))
 (defn pr-object-sizes []
@@ -866,8 +866,6 @@
   (println "\td_list:\t\t\t" (cxx "return obj<number>(sizeof(d_list));"))
   (println "\tpointer:\t\t" (cxx "return obj<number>(sizeof(pointer));"))
   (println "\telapsed_micros:\t\t" (cxx "return obj<number>(sizeof(elapsed_micros));"))
-  (println "\tpid_controller<real_t>:\t"
-           (cxx "return obj<number>(sizeof(pid_controller<real_t>));"))
   (println "\tdelayed:\t\t" (cxx "return obj<number>(sizeof(delayed));"))
   (println "\tstring:\t\t\t" (cxx "return obj<number>(sizeof(string));"))
   (println "Interface Types")
@@ -875,12 +873,12 @@
   (println "\tlambda_i:\t\t" (cxx "return obj<number>(sizeof(lambda_i));"))
   (println "\tderef_i:\t\t" (cxx "return obj<number>(sizeof(deref_i));")))
 (defnative memory-pool-free-space []
-  (on "defined FERRET_MEMORY_POOL_SIZE"
+  (on "defined ERMINE_MEMORY_POOL_SIZE"
       "size_t acc = 0;
-       for(size_t i = 0; i < FERRET_MEMORY_POOL_PAGE_COUNT; i++)
+       for(size_t i = 0; i < ERMINE_MEMORY_POOL_PAGE_COUNT; i++)
          if(memory::allocator::program_memory.used.get(i) == false)
            acc++;
-       return obj<number>((acc*sizeof(FERRET_MEMORY_POOL_PAGE_TYPE)));"))
+       return obj<number>((acc*sizeof(ERMINE_MEMORY_POOL_PAGE_TYPE)));"))
 (defn system-exit []
   "::exit(0);")
 (defn system-abort []
@@ -912,67 +910,149 @@
     `(new-fsm
       ~(-> transitions first first)
       (fn [~fsm-state] ~switch))))
-(defobject pid_controller "pid_controller_o.h")
-(defn new-pid-controller [^real_t kp ^real_t ki ^real_t kd
-                          ^real_t i-min ^real_t i-max
-                          ^real_t o-min ^real_t o-max
-                          ^bool_t cont
-                          sp]
-  "return obj<pid_controller<real_t>>(kp, ki, kd, i_min, i_max, o_min, o_max, cont, sp);")
 
-(defmacro pid-controller [& options]
-  (let [defaults {:kp 0 :ki 0 :kd 0 :set-point 0 :bounds [-1 1 -1 1] :continuous false}
-        options (merge defaults (apply hash-map options))
-        {:keys [container kp ki kd set-point bounds continuous]} options
-        [in-min in-max out-min out-max] bounds]
-    `(new-pid-controller ~kp ~ki ~kd ~in-min ~in-max ~out-min ~out-max ~continuous ~set-point)))
-(defobject moving_average_filter "moving_average_filter_o.h")
-
-(defn new-moving-average-filter [^real_t a]
-  "return obj<moving_average_filter<real_t>>(a);")
-(defn assert-aux [f cb]
-  (when (not (f))
-    (cb)))
-
-(defmacro assert
-  ([exp]
-   `(~'assert
-     ~exp
-     (~'println
-      "err" ~(-> exp pr-str (clojure.string/escape {\\ "\\\\"})))
-     (system-abort)))
-  ([exp & callback]
-   `(assert-aux (fn [] ~exp) (fn [] ~@callback))))
-(defn is-aux-expect [ex-fb form-fn form-str]
-  (let [expect (ex-fb)
-        got  (form-fn)]
-    (when (not=  expect got)
-      (println "err" form-str "\n exp" expect "\n got" got)
-      (system-abort))))
-
-(defmacro is [form]
-  (cond (= (first form) '=)
-        (let [[_ expected form] form]
-          `(is-aux-expect
-            (fn [] ~expected) (fn [] ~form)
-            ~(-> form pr-str (clojure.string/escape {\\ "\\\\"}))))
-        :default `(~'assert ~form)))
-
-(defmacro deftest [name & exprs]
-  (defonce fir-unit-tests (atom []))
-  (swap! fir-unit-tests conj name)
-  `(def ~name (fn [] ~@exprs)))
-
-(defmacro run-all-tests []
-  (if (bound? #'fir-unit-tests)
-    `(do ~@(map #(list %) @fir-unit-tests)
-         (system-exit))
-    `(system-exit)))
 (defmacro configure-runtime! [& body]
   `(native-define ~(->> (partition 2 body)
                         (map #(str "#define " (first %) " " (second %) "\n"))
                         (list))))
-(defmacro configure-ferret! [& body]
+(defmacro configure-ermine! [& body]
   `(native-define ~(str "// build-conf-begin\n"
                         "//" (str (apply hash-map body)) "\n"
                         "// build-conf-end\n")))
+
+
+(native-header "termios.h"
+               "fcntl.h"
+               "unistd.h"
+               "sys/ioctl.h")
+
+(defn open-aux [^c_str port speed v-min v-time]
+  "struct termios toptions;
+   int fd;
+
+   fd = open(port, O_RDWR | O_NOCTTY | O_NDELAY);
+
+   if (fd == -1){
+     return nil();
+    }else{
+
+     if (tcgetattr(fd, &toptions) < 0) {
+       return nil();
+     }else{
+
+     speed_t rate = B9600;
+
+     switch (number::to<number_t>(speed)) {
+         case 9600:
+             rate = B9600;
+             break;
+         case 19200:
+             rate = B19200;
+             break;
+         case 38400:
+             rate = B38400;
+             break;
+         case 57600:
+             rate = B57600;
+             break;
+         case 115200:
+             rate = B115200;
+             break;
+         case 230400:
+             rate = B230400;
+             break;
+         case 460800:
+             rate = B460800;
+             break;
+         case 500000:
+             rate = B500000;
+             break;
+         case 576000:
+             rate = B576000;
+             break;
+         case 921600:
+             rate = B921600;
+             break;
+         case 1000000:
+             rate = B1000000;
+             break;
+         case 1152000:
+             rate = B1152000;
+             break;
+         case 1500000:
+             rate = B1500000;
+             break;
+         case 2000000:
+             rate = B2000000;
+             break;
+         case 2500000:
+             rate = B2500000;
+             break;
+         case 3000000:
+             rate = B3000000;
+             break;
+         case 3500000:
+             rate = B3500000;
+             break;
+         case 4000000:
+             rate = B4000000;
+             break;
+         default: 
+             return nil();
+      }
+
+      cfsetispeed(&toptions, rate);
+      cfsetospeed(&toptions, rate);
+
+      // 8N1
+      toptions.c_cflag &= (tcflag_t)~PARENB;
+      toptions.c_cflag &= (tcflag_t)~CSTOPB;
+      toptions.c_cflag &= (tcflag_t)~CSIZE;
+      toptions.c_cflag |= (tcflag_t)CS8;
+      // no flow control
+      toptions.c_cflag &= (tcflag_t)~CRTSCTS;
+
+      toptions.c_cflag |= (tcflag_t)CREAD | CLOCAL;  // turn on READ & ignore ctrl lines
+      toptions.c_iflag &= (tcflag_t)~(IXON | IXOFF | IXANY); // turn off s/w flow ctrl
+
+      toptions.c_lflag &= (tcflag_t)~(ICANON | ECHO | ECHOE | ISIG); // make raw
+      toptions.c_oflag &= (tcflag_t)~OPOST; // make raw
+
+      toptions.c_cc[VMIN]  = (cc_t)number::to<number_t>(v_min);
+      toptions.c_cc[VTIME] = (cc_t)number::to<number_t>(v_time);
+
+      if( tcsetattr(fd, TCSANOW, &toptions) < 0) {
+       return nil();
+      }else
+        return obj<number>(fd);
+    }
+   }")
+
+(defn open
+  ([port]
+   (open-aux port 9600 0 20))
+  ([port speed]
+   (open-aux port speed 0 20))
+  ([port speed v-min v-time]
+   (open-aux port speed v-min v-time)))
+
+
+(defn write [^number_t port ^byte data]
+  "byte b[1] = {data};
+   write(port, b, 1);")
+
+(defn available [^number_t port]
+  "int bytes_ready;
+   int op = ioctl(port, FIONREAD, &bytes_ready);
+   if (op == -1)
+     return nil();
+   return obj<number>(bytes_ready);")
+
+(defn read [^number_t port]
+  "char b[1] = {0};
+   ssize_t bytes_read = read(port, b, 1);
+
+   if (bytes_read == -1)
+     return nil();
+   else
+     return obj<number>(b[0]);")

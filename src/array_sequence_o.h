@@ -17,7 +17,7 @@ public:
 
   type_t type() const final { return type_id<array_seq>; }
 
-#if !defined(FERRET_DISABLE_STD_OUT)
+#if !defined(ERMINE_DISABLE_STD_OUT)
     void stream_console() const final {
       seekable_i::stream_console(var((object*)this));
     }
@@ -49,7 +49,7 @@ class array<var> {
   size_t  _size{0};
 
   var* allocate(){
-    var* storage = static_cast<var*>(FERRET_ALLOCATOR::allocate(_size * sizeof(var))) ;
+    var* storage = static_cast<var*>(ERMINE_ALLOCATOR::allocate(_size * sizeof(var))) ;
     for(size_t i = 0; i < _size; i++)
       new (&storage[i]) var();
     return storage;
@@ -72,7 +72,7 @@ public:
   ~array(){
     for(size_t i = 0; i < size(); i++)
       (&data[i])->~var();
-    FERRET_ALLOCATOR::free(data);
+    ERMINE_ALLOCATOR::free(data);
   }
 
   inline array& operator=(array&& x){
@@ -114,7 +114,7 @@ public:
 
   type_t type() const final { return type_id<array_seq>; }
 
-#if !defined(FERRET_DISABLE_STD_OUT)
+#if !defined(ERMINE_DISABLE_STD_OUT)
     void stream_console() const final {
       seekable_i::stream_console(var((object*)this));
     }
