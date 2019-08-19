@@ -1,29 +1,5 @@
-(defmacro -> [x & forms]
-  (loop [x x, forms forms]
-    (if forms
-      (let [form (first forms)
-            threaded (if (seq? form)
-                       `(~(first form) ~x ~@(next form))
-                       (list form x))]
-        (recur threaded (next forms)))
-      x)))
-
-(defmacro ->> [x & forms]
-  (loop [x x, forms forms]
-    (if forms
-      (let [form (first forms)
-            threaded (if (seq? form)
-                       `(~(first form) ~@(next form) ~x)
-                       (list form x))]
-        (recur threaded (next forms)))
-      x)))
-
-(defmacro defn [name & body]
-  `(def ~name (fn ~@body)))
-
 (defmacro fn [& sig]
-  (let [name (if (symbol? (first sig)) (first sig) nil)
-        body (if name (rest sig) sig)]
+  (let [name (if (symbol? (first sig)) (first sig) nil), body (if name (rest sig) sig)]
     (if (vector? (first body))
       (let [[args & body] body]
         (new-fir-fn :name name :args args :body body))
@@ -32,51 +8,18 @@
                             (let [[args & body] body]
                               (new-fir-fn :args args :body body)))
                        body)
-            arity (->> (map first body)
-                       (map (fn* [args] (filter #(not (= % '&)) args)))
-                       (map #(count %)))
-            fns   (->> (interleave arity fns)
-                       (partition 2)
-                       (sort-by first))
-            fns   (if (->> fns last second second      ;; last arity arguments
-                           (take-last 2) first (= '&)) ;; check &
-                    (let [switch        (drop-last 1 fns)
-                          [[_ default]] (take-last 1 fns)]
-                      `(fir-defn-arity ~switch ~default))
-                    `(fir-defn-arity ~fns))]
+            arity (map (fn* [body]
+                            (let [[args & body] body]
+                              (count (remove (fn* [arg] (= arg '&)) args))))
+                       body)
+            fns   (sort-by first (partition 2 (interleave arity fns)))
+            fns   (if (= (first (take-last 2 (second (second (last fns))))) '&)
+                    (let [switch (drop-last 1 fns), [[_ default]] (take-last 1 fns)]
+                      `(fir-defn-arity ~switch ~default))
+                    `(fir-defn-arity ~fns))]
         (new-fir-fn :escape false :name name :body [fns])))))
 
-(defmacro cxx [& body]
-  (let [body (apply str body)]
-    `((fn [] ~body))))
-
-(defmacro defnative [name args & form]
-  (let [includes (->> (filter #(seq? (nth % 2)) form)
-                      (map #(cons (nth % 1) (apply list (nth % 2))))
-                      (map (fn [form]
-                             (let [[guard & headers] form]
-                               (str "\n#if " guard "\n"
-                                    (apply str (map #(str "#include \"" % "\"\n") headers))
-                                    "#endif\n"))))
-                      (map #(list 'native-declare %)))
-        enabled (-> (symbol-conversion name) (str "_enabled") .toUpperCase)
-        body (->> (map #(vector (second %) (last %)) form)
-                  (map #(str "\n#if " (first %) "\n"
-                             "#define " enabled "\n"
-                             (second %)
-                             "\n#endif\n"))
-                  (apply str))
-        body (str body
-                  "\n#if !defined " enabled "\n"
-                  "# error " (symbol-conversion name) " is not supported on this platform\n"
-                  "#endif\n")
-        pre-ample (->> (map #(vector (second %) (drop-last (drop 3 %))) form)
-                       (remove #(empty? (second %)))
-                       (map #(str "\n#if " (first %) "\n"
-                                  (apply str (map (fn [line] (str line "\n")) (second %)))
-                                  "\n#endif\n"))
-                       (map #(list 'native-declare %)))]
-    `(def ~name (fn ~args ~@includes ~@pre-ample ~body))))
+(defmacro defn [name & body] `(def ~name (fn ~@body)))
 
 (defobject "
 struct seekable_i {
@@ -96,22 +39,6 @@ struct seekable_i {
         return false;
     }
   }
-
-#if !defined(ERMINE_DISABLE_STD_OUT)
-  static void stream_console(ref coll) {
-    var tail = rt::rest(coll);
-
-    rt::print('(');
-    if (tail)
-      rt::first(coll).stream_console();
-
-    for_each(i, tail) {
-      rt::print(' ');
-      i.stream_console();
-    }
-    rt::print(')');
-  }
-#endif
 };
 ")
 
@@ -146,12 +73,6 @@ struct boolean final : object {
   bool equals(ref o) const final {
     return (value == o.cast<boolean>()->container());
   }
-
-#if !defined(ERMINE_DISABLE_STD_OUT)
-  void stream_console() const final {
-    rt::print(value ? \"true\" : \"false\");
-  }
-#endif
 };
 
 namespace cached {
@@ -244,12 +165,6 @@ struct number final : object {
     return (rt::abs(n - number::to<real_t>(o)) < real_epsilon);
   }
 
-#if !defined(ERMINE_DISABLE_STD_OUT)
-  void stream_console() const final {
-    rt::print(n);
-  }
-#endif
-
   template <typename T> static T to(ref v) {
     return (T)v.cast<number>()->n;
   }
@@ -259,12 +174,6 @@ struct number final : object {
 (defobject "
 struct empty_sequence final : object {
   type_t type() const final { return type_id<empty_sequence>; }
-
-#if !defined(ERMINE_DISABLE_STD_OUT)
-  void stream_console() const final {
-    rt::print(\"()\");
-  }
-#endif
 };
 
 namespace cached {
@@ -280,12 +189,6 @@ struct sequence final : object, seekable_i {
     const var data;
 
     explicit sequence(ref d = nil(), ref n = nil()) : next(n), data(d) { }
-
-#if !defined(ERMINE_DISABLE_STD_OUT)
-    void stream_console() const final {
-      seekable_i::stream_console(var((object*)this));
-    }
-#endif
 
     virtual seekable_i* cast_seekable_i() { return this; }
 
@@ -360,12 +263,6 @@ struct lazy_sequence final : object, seekable_i {
 
   explicit lazy_sequence(ref d, ref t, bool c = false) : cache(c), thunk(t), data(d) { }
 
-#if !defined(ERMINE_DISABLE_STD_OUT)
-  void stream_console() const final {
-    seekable_i::stream_console(var((object*)this));
-  }
-#endif
-
   virtual seekable_i* cast_seekable_i() { return this; }
 
   void yield() {
@@ -420,25 +317,6 @@ struct lazy_sequence final : object, seekable_i {
     else
       return tail;
   }
-
-  static var from(ref seq) {
-    struct walk : lambda_i {
-      var seq;
-
-      explicit walk(ref s) : seq(s) { }
-
-      var invoke(ref) const final {
-        var tail = rt::rest(seq);
-
-        if (tail.is_nil())
-          return nil();
-        else
-          return obj<lazy_sequence>(rt::first(seq), obj<walk>(tail), true);
-      }
-    };
-
-    return obj<lazy_sequence>(obj<walk>(seq), true);
-  }
 };
 ")
 
@@ -458,12 +336,6 @@ struct array_seq : object, seekable_i {
   explicit array_seq(var b, size_t p = 0) : pos(p), storage(b) { }
 
   explicit array_seq(size_t size) : pos(0), storage(obj<value_t>(size)) { }
-
-#if !defined(ERMINE_DISABLE_STD_OUT)
-  void stream_console() const final {
-    seekable_i::stream_console(var((object*)this));
-  }
-#endif
 
   virtual seekable_i* cast_seekable_i() { return this; }
 
@@ -553,12 +425,6 @@ struct array_seq<var,var> : object, seekable_i {
 
   explicit array_seq(var b, size_t p = 0) : pos(p), storage(b) { }
 
-#if !defined(ERMINE_DISABLE_STD_OUT)
-  void stream_console() const final {
-    seekable_i::stream_console(var((object*)this));
-  }
-#endif
-
   virtual seekable_i* cast_seekable_i() { return this; }
 
   var cons(ref x) final {
@@ -605,12 +471,6 @@ struct d_list final : lambda_i, seekable_i {
   explicit d_list() : data(rt::list(rt::list())) { }
 
   explicit d_list(ref l) : data(l) { }
-
-#if !defined(ERMINE_DISABLE_STD_OUT)
-  void stream_console() const final {
-    data.stream_console();
-  }
-#endif
 
   var assoc(ref k, ref v) const {
     ref map = dissoc_aux(k);
@@ -706,14 +566,6 @@ typedef d_list map_t;
 #endif
 ")
 
-(defn new-d-list-aux [keys vals] "return obj<d_list>(keys, vals);")
-
-(defmacro new-d-list [& args]
-  (let [kvs (partition 2 args)
-        keys (map first kvs)
-        vals (map second kvs)]
-    `(new-d-list-aux (list ~@keys) (list ~@vals))))
-
 (defn assoc [m k v] "return m.cast<map_t>()->assoc(k, v);")
 (defn dissoc [m k] "return m.cast<map_t>()->dissoc(k);")
 
@@ -736,13 +588,6 @@ struct keyword final : lambda_i {
   explicit keyword(const char* str): hash(hash_key(str)) { }
 
   bool equals(ref o) const final { return (hash == o.cast<keyword>()->hash); }
-
-#if !defined(ERMINE_DISABLE_STD_OUT)
-  void stream_console() const final {
-    rt::print(\"keyword#\");
-    rt::print(hash);
-  }
-#endif
 
   var invoke(ref args) const final {
     ref map = rt::first(args);
@@ -785,14 +630,6 @@ struct string final : object, seekable_i {
   }
 
   explicit string(const char* str, number_t length) { from_char_pointer(str, length); }
-
-#if !defined(ERMINE_DISABLE_STD_OUT)
-  void stream_console() const final {
-    var packed = string::pack(var((object*)this));
-    char* str = string::c_str(packed);
-    rt::print(str);
-  }
-#endif
 
   virtual seekable_i* cast_seekable_i() { return this; }
 
@@ -856,12 +693,6 @@ template <> ::std::string string::to(ref str) {
 #endif
 ")
 
-(defn new-string
-  ([] "")
-  ([x] "return obj<string>(x);")
-  ([x y] (new-string (concat x y)))
-  ([x y & more] (new-string (concat x y) (apply concat more))))
-
 (defobject "
 struct atomic final : deref_i {
   type_t type() const final { return type_id<atomic>; }
@@ -870,14 +701,6 @@ struct atomic final : deref_i {
   var data;
 
   explicit atomic(ref d) : data(d) { }
-
-#if !defined(ERMINE_DISABLE_STD_OUT)
-  void stream_console() const final {
-    rt::print(\"atom<\");
-    data.stream_console();
-    rt::print('>');
-  }
-#endif
 
   var swap(ref f, ref args) {
     lock_guard guard(lock);
@@ -901,168 +724,44 @@ struct atomic final : deref_i {
 (defn atom [x] "return obj<atomic>(x)")
 
 (defn swap! [a f & args] "return a.cast<atomic>()->swap(f, args);")
-(defn reset! [a newval] "return a.cast<atomic>()->reset(newval);")
+(defn reset! [a x] "return a.cast<atomic>()->reset(x);")
 
-(defobject "
-#ifdef ERMINE_STD_LIB
-struct async final : deref_i {
-  type_t type() const final { return type_id<async>; }
+(defn lazy-seq! [f] "return obj<lazy_sequence>(f);")
 
-  mutex lock;
-  bool cached;
-  var value;
-  var fn;
-  std::future<var> task;
+(defn list [& s] "return s;")
 
-  inline var exec() {
-    return run(fn);
-  }
+(defn list? [x] "return x.is_type(type_id<sequence>) ? cached::true_o : cached::false_o;")
 
-  explicit async(ref f) : cached(false), value(nil()), fn(f), task(std::async(std::launch::async, [this]() { return exec(); })) { }
+(defn seqable? [x] "return rt::is_seqable(x) ? cached::true_o : cached::false_o;")
 
-#if !defined(ERMINE_DISABLE_STD_OUT)
-  void stream_console() const final {
-    rt::print(\"future<\");
-    fn.stream_console();
-    rt::print('>');
-  }
-#endif
+(defn cons [x s] "return rt::cons(x, s);")
 
-  bool is_ready() {
-    lock_guard guard(lock);
-    if (cached)
-      return true;
-    return (task.wait_for(std::chrono::seconds(0)) == std::future_status::ready);
-  }
+(defn first [s] "return rt::first(s);")
+(defn rest [s] "return rt::rest(s);")
 
-  void get() {
-    if (!cached) {
-      value = task.get();
-      cached = true;
-    }
-  }
+(defn second [s] (first (rest s)))
 
-  var deref() final {
-    lock_guard guard(lock);
-    get();
-    return value;
-  }
-};
-#endif
-")
+(defn nth [s ^number_t n] "return rt::nth(s, n);")
+(defn nthrest [s ^number_t n] "return rt::nthrest(s, n);")
 
-(defmacro future [& body] `(_future_ (fn [] ~@body)))
+(defn reduce [f r s]
+   "__result = r;
 
-(defn _future_ [f] "return obj<async>(f);")
+    for_each(i, s)
+      __result = run(f, __result, i);")
 
-(defn future-done? [f]
-  "if (f.cast<async>()->is_ready())
-     return cached::true_o;
-   else
-     return cached::false_o;")
+(defn apply [f & s] "return rt::apply(f, s);")
 
-(defobject "
-struct delayed final : deref_i {
-  type_t type() const final { return type_id<delayed>; }
-
-  mutex lock;
-  var fn;
-  var val;
-
-  explicit delayed(ref f) : fn(f) { }
-
-  var deref() final {
-    lock_guard guard(lock);
-
-    if (!fn.is_nil()) {
-      val = fn.cast<lambda_i>()->invoke(nil());
-      fn = nil();
-    }
-
-    return val;
-  }
-};
-")
-
-(defn _delay_ [f] "return obj<delayed>(f)")
-
-(defmacro delay [& body] `(_delay_ (fn [] ~@body)))
-
-(defn delay? [d]
-  "if (d.is_type(type_id<delayed>))
-     return cached::true_o;
-   else
-     return cached::false_o;")
-
-(defn force [d] @d)
-
-(defn new-lazy-seq
-  ([thunk] "return obj<lazy_sequence>(thunk);")
-  ([data thunk] "return obj<lazy_sequence>(data, thunk);"))
-
-(defmacro lazy-seq [& body] `(new-lazy-seq (fn [] ~@body)))
-
-(defn lazy-seq-cache [seq] "return lazy_sequence::from(seq);")
-
-(defn list [& xs] "return xs;")
-
-(defn list? [x]
-  "if (x.is_type(type_id<sequence>))
-     return cached::true_o;
-   else
-     return cached::false_o;")
-
-(defn seqable? [coll]
-  "if (rt::is_seqable(coll))
-     return cached::true_o;
-   else
-     return cached::false_o;")
-
-(defn cons [x seq] "return rt::cons(x, seq);")
-
-(defn first [x] "return rt::first(x);")
-(defn second [x] "return rt::first(rt::rest(x));")
-(defn rest [x] "return rt::rest(x);")
-
-(defn nth [coll ^number_t index] "return rt::nth(coll, index);")
-(defn nthrest [coll ^number_t n] "return rt::nthrest(coll, n);")
-
-(defn reduce
-  ([f xs] (reduce f (first xs) (rest xs)))
-  ([f acc coll]
-   "__result = acc;
-    for_each(i, coll)
-      __result = run(f, __result, i);"))
-
-(defn apply [f & argv] "return rt::apply(f, argv);")
-
-(defn conj [coll & xs] (reduce (fn [h v] (cons v h)) (if (nil? coll) (list) coll) xs))
+(defn conj [coll & s] (reduce (fn [h v] (cons v h)) (if (nil? coll) (list) coll) s))
 
 (defn reverse [s] (reduce (fn [h v] (cons v h)) (list) s))
 
-(defn true? [x]
-  "if (x)
-     return cached::true_o;
-   else
-     return cached::false_o;")
+(defn true? [x] "return (x) ? cached::true_o : cached::false_o;")
+(defn false? [x] "return (!x) ? cached::true_o : cached::false_o;")
 
-(defn false? [x]
-  "if (!x)
-     return cached::true_o;
-   else
-     return cached::false_o;")
+(defn nil? [x] "return x.is_nil() ? cached::true_o : cached::false_o;")
 
-(defn nil? [x]
-  "if (x.is_nil())
-     return cached::true_o;
-   else
-     return cached::false_o;")
-
-(defn not [x]
-  "if (x)
-     return cached::false_o;
-   else
-     return cached::true_o;")
+(defn not [x] "return (x) ? cached::false_o : cached::true_o;")
 
 (defn = [& args]
   "var curr = rt::first(args);
@@ -1073,13 +772,7 @@ struct delayed final : deref_i {
    }
    return cached::true_o;")
 
-(defmacro not= [& test] `(not (= ~@test)))
-
-(defn identical? [x y]
-  "if (x.get() == y.get())
-     return cached::true_o;
-   else
-     return cached::false_o;")
+(defn identical? [x y] "return (x.get() == y.get()) ? cached::true_o : cached::false_o;")
 
 (defn < [& args]
   "var a = rt::first(args);
@@ -1124,44 +817,6 @@ struct delayed final : deref_i {
    }
 
    return cached::true_o;")
-
-(defmacro and
-  ([] true)
-  ([x] x)
-  ([x & next] `(if ~x (and ~@next) false)))
-
-(defmacro or
-  ([] nil)
-  ([x] x)
-  ([x & next] `(if ~x ~x (or ~@next))))
-
-(defmacro when [test & body] `(if ~test (do ~@body)))
-
-(defmacro cond [& clauses]
-  (when clauses
-    `(if ~(first clauses)
-       ~(if (next clauses)
-          (second clauses)
-          (throw (Error. "cond requires an even number of forms")))
-       (cond ~@(next (next clauses))))))
-
-(defmacro if-let
-  ([bindings then]
-   `(if-let ~bindings ~then nil))
-  ([bindings then else & oldform]
-   (let [form (bindings 0) tst (bindings 1)]
-     `(let* [temp# ~tst]
-        (if temp#
-          (let* [~form temp#]
-            ~then)
-          ~else)))))
-
-(defmacro when-let [bindings & body]
-  (let [form (bindings 0) tst (bindings 1)]
-    `(let* [temp# ~tst]
-       (when temp#
-         (let* [~form temp#]
-           ~@body)))))
 
 (defn count [s] "return obj<number>(rt::count(s))")
 
@@ -1234,12 +889,6 @@ struct delayed final : deref_i {
 
 (defn rem [^number_t num ^number_t div] "return obj<number>((num % div));")
 
-(defn mod [num div]
-  (let [m (rem num div)]
-    (if (or (zero? m) (= (pos? num) (pos? div)))
-      m
-      (+ m div))))
-
 (defn bit-and [^number_t x ^number_t y] "return obj<number>((x & y));")
 (defn bit-not [^number_t x] "return obj<number>(~x);")
 (defn bit-or [^number_t x ^number_t y] "return obj<number>((x | y));")
@@ -1250,83 +899,66 @@ struct delayed final : deref_i {
 
 (defn identity [x] x)
 
-(defn thread [f] "return obj<async>(f);")
-
-(defmacro doseq [binding & body] `(_doseq_ ~(second binding) (fn [~(first binding)] ~@body)))
-
-(defn _doseq_ [seq f] "for_each(it, seq) run(f, it);")
-
-(defmacro dotimes [binding & body] `(_dotimes_ ~(second binding) (fn [~(first binding)] ~@body)))
-
-(defn _dotimes_ [^number_t t f] "for (number_t i = 0; i < t; i++) run(f, obj<number>(i));")
-
 (defn map [f coll]
-  (lazy-seq
-    (when (seqable? coll)
-      (cons (f (first coll)) (map f (rest coll))))))
+  (lazy-seq!
+    (fn []
+      (if (seqable? coll)
+        (cons (f (first coll)) (map f (rest coll)))))))
 
-(defn range
-  ([high] (range 0 high))
-  ([^number_t low ^number_t high] "return rt::range(low, high)"))
+(defn range [^number_t n] "return rt::range(0, n)")
 
 (defn take [n coll]
-  (lazy-seq
-    (when (and (seqable? coll) (> n 0))
-      (cons (first coll) (take (- n 1) (rest coll))))))
+  (lazy-seq!
+    (fn []
+      (if (seqable? coll)
+        (if (> n 0)
+          (cons (first coll) (take (- n 1) (rest coll))))))))
 
 (defn take-while [pred s]
-  (lazy-seq
-    (when (and (seqable? s) (pred (first s)))
-      (cons (first s) (take-while pred (rest s))))))
+  (lazy-seq!
+    (fn []
+      (if (seqable? s)
+        (if (pred (first s))
+          (cons (first s) (take-while pred (rest s))))))))
 
 (defn drop [^number_t n coll] "return rt::nthrest(coll, n);")
 
-(defn drop-while-aux [p c]
-  "__result = c;
+(defn drop-while-aux [pred coll]
+  "__result = coll;
 
-   while (run(p, __result))
+   while (run(pred, __result))
      __result = rt::rest(__result);")
 
 (defn drop-while [pred coll]
-  (lazy-seq
-    (drop-while-aux #(and (seqable? %) (pred (first %))) coll)))
+  (lazy-seq!
+    (fn []
+      (drop-while-aux (fn [s] (if (seqable? s) (pred (first s)) false)) coll))))
 
-(defn concat
-  ([] (list))
-  ([x]
-    (when (seqable? x)
-      (cons (first x) (lazy-seq (concat (rest x))))))
-  ([x y]
-    (if (seqable? x)
-      (cons (first x) (lazy-seq (concat (rest x) y)))
-      (concat y)))
-  ([x y & more]
-    (concat (concat x y) (apply concat more))))
+(defn concat1 [x]
+  (if (seqable? x)
+    (cons (first x) (lazy-seq! (fn [] (concat1 (rest x)))))))
+
+(defn concat [x y]
+  (if (seqable? x)
+    (cons (first x) (lazy-seq! (fn [] (concat (rest x) y))))
+    (concat1 y)))
 
 (defn filter [pred coll]
-  (lazy-seq
-    (when (seqable? coll)
-      (let [[f & r] coll]
-        (if (pred f)
-          (cons f (filter pred r))
-          (filter pred r))))))
+  (lazy-seq!
+    (fn []
+      (if (seqable? coll)
+        (let [[f & r] coll]
+          (if (pred f)
+            (cons f (filter pred r))
+            (filter pred r)))))))
 
-(defn partition
-  ([n coll]
-    (partition n n coll))
-  ([n step coll]
-    (lazy-seq
-      (when (seqable? coll)
-        (let [p (take n coll)]
-          (when (= n (count p))
-            (cons p (partition n step (nthrest coll step))))))))
-  ([n step pad coll]
-    (lazy-seq
-      (when (seqable? coll)
+(defn partition [n coll]
+  (lazy-seq!
+    (fn []
+      (if (seqable? coll)
         (let [p (take n coll)]
           (if (= n (count p))
-            (cons p (partition n step pad (nthrest coll step)))
-            (list (take n (concat p pad)))))))))
+            (cons p (partition n (nthrest coll n)))))))))
 
 (defn every? [pred coll]
   "for_each(i, coll) {
@@ -1336,41 +968,18 @@ struct delayed final : deref_i {
    return cached::true_o;")
 
 (defn interleave [s1 s2]
-  (lazy-seq
-    (when (and (seqable? s1) (seqable? s2))
-      (cons (first s1) (cons (first s2) (interleave (rest s1) (rest s2)))))))
+  (lazy-seq!
+    (fn []
+      (if (seqable? s1)
+        (if (seqable? s2)
+          (cons (first s1) (cons (first s2) (interleave (rest s1) (rest s2)))))))))
 
 (defn flatten [s]
-  (lazy-seq
-    (when (seqable? s)
-      (if (seqable? (first s))
-        (concat (flatten (first s)) (flatten (rest s)))
-        (cons (first s) (flatten (rest s)))))))
+  (lazy-seq!
+    (fn []
+      (if (seqable? s)
+        (if (seqable? (first s))
+          (concat (flatten (first s)) (flatten (rest s)))
+          (cons (first s) (flatten (rest s))))))))
 
-(defn string? [s]
-  "if (s.is_type(type_id<string>))
-     return cached::true_o;
-   else
-     return cached::false_o;")
-
-(defnative print [& more]
-  (on "!defined(ERMINE_DISABLE_STD_OUT)"
-      "if (more.is_nil())
-         return nil();
-       ref f = rt::first(more);
-       f.stream_console();
-       ref r = rt::rest(more);
-       for_each(it, r) {
-         rt::print(' ');
-         it.stream_console();
-       }
-       return nil();"))
-
-(defn println [& more]
-  (apply print more)
-  (cxx "rt::print((char)0xA);"))
-
-(defn read-line []
-  "char buf[ERMINE_IO_STREAM_SIZE] = {0};
-   rt::read_line(buf, ERMINE_IO_STREAM_SIZE);
-   return obj<string>(buf);")
+(defn string? [s] "return s.is_type(type_id<string>) ? cached::true_o : cached::false_o;")
