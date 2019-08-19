@@ -114,7 +114,7 @@ class seekable_i {
 
         if (lf.is_nil() && rf.is_nil())
           return true;
-        
+
         if (lf != rf)
           return false;
       }
@@ -160,7 +160,7 @@ public:
   }
 #endif
 
-  explicit boolean(bool b) : value(b) {} 
+  explicit boolean(bool b) : value(b) {}
 
   bool container() const {
     return value;
@@ -231,7 +231,7 @@ public:
   type_t type() const final { return type_id<value>; }
 
   template <typename... Args>
-  explicit value(Args&&... args) : payload(static_cast<Args&&>(args)...) { } 
+  explicit value(Args&&... args) : payload(static_cast<Args&&>(args)...) { }
 
   T to_value() const {
     return payload;
@@ -240,14 +240,14 @@ public:
   static T to_value(ref v){
     return v.cast<value<T>>()->payload;
   }
-  
+
   T & to_reference() {
     return payload;
   }
-    
+
   static T & to_reference(ref v) {
     return v.cast<value<T>>()->to_reference();
-  }  
+  }
 };
 ")
 
@@ -268,7 +268,7 @@ public:
   }
 #endif
 
-  template<typename T> explicit number(T x) : n(real_t(x)) {} 
+  template<typename T> explicit number(T x) : n(real_t(x)) {}
 
   template<typename T> static T to(ref v){
     return (T)v.cast<number>()->n;
@@ -307,7 +307,7 @@ class sequence final : public object, public seekable_i {
     }
 #endif
 
-    explicit sequence(ref d = nil(), ref n = nil()) : next(n), data(d) {} 
+    explicit sequence(ref d = nil(), ref n = nil()) : next(n), data(d) {}
 
     virtual seekable_i* cast_seekable_i() { return this; }
 
@@ -336,15 +336,15 @@ class sequence final : public object, public seekable_i {
   };
 
   namespace runtime {
-    inline var list() { 
+    inline var list() {
       return cached::empty_sequence_o;
     }
-    inline var list(ref v) { 
+    inline var list(ref v) {
       return obj<sequence>(v,cached::empty_sequence_o);
     }
-                      
+
     template <typename... Args>
-    inline var list(ref first, Args const & ... args) { 
+    inline var list(ref first, Args const & ... args) {
       return obj<sequence>(first, list(args...));
     }
   }
@@ -352,14 +352,14 @@ class sequence final : public object, public seekable_i {
   #ifdef ERMINE_STD_LIB
   typedef ::std::vector<var>  std_vector;
 
-  template <> std_vector sequence::to(ref v) { 
+  template <> std_vector sequence::to(ref v) {
     std_vector ret;
     for_each(i, v)
       ret.push_back(i);
     return ret;
   }
 
-  template <> var sequence::from(std_vector v) { 
+  template <> var sequence::from(std_vector v) {
     var ret;
     std::vector<var>::reverse_iterator rit;
     // cppcheck-suppress postfixOperator
@@ -425,7 +425,7 @@ public:
         return rt::first(run(thunk));
     return data;
   }
-    
+
   var rest() final {
     lock_guard guard(lock);
     var tail;
@@ -491,7 +491,7 @@ public:
 #endif
 
   virtual seekable_i* cast_seekable_i() { return this; }
-  
+
   var cons(ref x) final {
     return obj<sequence>(x, var(this));
   }
@@ -689,7 +689,7 @@ class d_list final : public lambda_i, public seekable_i {
     if (!not_found.is_nil()){
       return not_found;
     }else{
-      return nil();  
+      return nil();
     }
   }
 
@@ -766,7 +766,7 @@ class keyword final : public lambda_i {
   static constexpr number_t hash_key(const char * key){
     return *key ? (number_t)*key + hash_key(key + 1) : 0;
   }
-  
+
 public:
 
   type_t type() const final { return type_id<keyword>; }
@@ -780,7 +780,7 @@ public:
   }
 #endif
 
-  explicit keyword(number_t w) : hash(w) {} 
+  explicit keyword(number_t w) : hash(w) {}
   explicit keyword(const char * str): hash(hash_key(str)) { }
 
   var invoke(ref args) const final {
@@ -823,7 +823,7 @@ public:
   }
 #endif
 
-  explicit string() : data(rt::list()) {} 
+  explicit string() : data(rt::list()) {}
 
   explicit string(ref s) : data(s) {}
 
@@ -929,7 +929,7 @@ class atomic final : public deref_i {
   }
 #endif
 
-  explicit atomic(ref d) : data(d) {} 
+  explicit atomic(ref d) : data(d) {}
 
   var swap(ref f, ref args){
     lock_guard guard(lock);
@@ -975,7 +975,7 @@ class async final : public deref_i {
   public:
 
   explicit async(ref f) :
-    cached(false), value(nil()), fn(f), 
+    cached(false), value(nil()), fn(f),
     task(std::async(std::launch::async, [this](){ return exec(); })){ }
 
   type_t type() const final { return type_id<async>; }
@@ -1032,7 +1032,7 @@ class delayed final : public deref_i {
 
   type_t type() const final { return type_id<delayed>; }
 
-  explicit delayed(ref f) : fn(f) {} 
+  explicit delayed(ref f) : fn(f) {}
 
   var deref() final {
     lock_guard guard(lock);
@@ -1217,8 +1217,7 @@ class delayed final : public deref_i {
     `(if ~(first clauses)
        ~(if (next clauses)
           (second clauses)
-          (throw (IllegalArgumentException.
-                  "cond requires an even number of forms")))
+          (throw (Error. "cond requires an even number of forms")))
        (cond ~@(next (next clauses))))))
 
 (defn _while_ [pred fn]
@@ -1236,9 +1235,6 @@ class delayed final : public deref_i {
 (defmacro while-let
   [[form test] & body]
   `(_while-let_ (fn [] ~test) (fn [~form] ~@body)))
-
-(defmacro forever [& body]
-  `(while true ~@body))
 
 (defmacro if-let
   ([bindings then]
@@ -1334,47 +1330,26 @@ class delayed final : public deref_i {
 (defn rem [^number_t num ^number_t div]
   "return obj<number>((num % div));")
 
-(defn mod [num div] 
-  (let [m (rem num div)] 
+(defn mod [num div]
+  (let [m (rem num div)]
     (if (or (zero? m) (= (pos? num) (pos? div)))
-      m 
+      m
       (+ m div))))
 
 (defn floor [^number_t x] "return obj<number>(x);")
 
-(defn interp [^real_t x
-              ^real_t in-min ^real_t in-max
-              ^real_t out-min ^real_t out-max]
-  "return obj<number>((x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min);")
-
-(defn clip [^number_t x ^number_t min ^number_t max]
-  "return obj<number>(rt::max(rt::min(max, x), min));")
-
 (defn bit-and [^number_t x ^number_t y] "return obj<number>((x & y));")
 (defn bit-not [^number_t x] "return obj<number>(~x);")
-(defn bit-or [^number_t x ^number_t y] "return obj<number>((x | y ));")
-(defn bit-xor [^number_t x ^number_t y] "return obj<number>((x ^ y ));")
+(defn bit-or [^number_t x ^number_t y] "return obj<number>((x | y));")
+(defn bit-xor [^number_t x ^number_t y] "return obj<number>((x ^ y));")
 
-(defn bit-shift-left [^number_t x ^number_t n] "return obj<number>((x << n ));")
-(defn bit-shift-right [^number_t x ^number_t n] "return obj<number>((x >> n ));")
-
-(defn bit-extract [^number_t x ^number_t p ^number_t k]
-  "__result = obj<number>((x >> p) & ((1 << k) - 1));")
-
-(defn bit-override [^number_t dst ^number_t src ^number_t pos ^number_t len]
-  "number_t mask = (((number_t)1 << len) - 1) << pos;
-   number_t num = (dst & ~mask) | (src & mask);
-   return obj<number>(num);")
+(defn bit-shift-left [^number_t x ^number_t n] "return obj<number>((x << n));")
+(defn bit-shift-right [^number_t x ^number_t n] "return obj<number>((x >> n));")
 
 (defn identity [x] x)
 
 (defn thread [f]
   "return obj<async>(f);")
-
-(defnative sleep [^number_t t]
-  (on "defined ERMINE_STD_LIB"
-      "auto duration = ::std::chrono::milliseconds(t);
-       ::std::this_thread::sleep_for(duration);"))
 
 (defmacro doseq [binding & body]
   `(_doseq_ ~(second binding)
@@ -1386,7 +1361,7 @@ class delayed final : public deref_i {
   `(_dotimes_ ~(second binding)
               (fn [~(first binding)] ~@body)))
 
-(defn _dotimes_ [^number_t t f] "for(number_t i = 0; i < t; i++) run(f,obj<number>(i));")
+(defn _dotimes_ [^number_t t f] "for (number_t i = 0; i < t; i++) run(f, obj<number>(i));")
 
 (defn map [f coll]
   (lazy-seq
@@ -1605,25 +1580,6 @@ class delayed final : public deref_i {
    rt::read_line(buf, ERMINE_IO_STREAM_SIZE);
    return obj<string>(buf);")
 
-(defnative slurp [^c_str f]
-  (on "defined ERMINE_STD_LIB"
-      ("fstream")
-      "std::ifstream ifs(f, std::ios::in | std::ios::binary | std::ios::ate);
-
-       if (!ifs.good())
-         return nil();
-
-       std::ifstream::pos_type file_size = ifs.tellg();
-       ifs.seekg(0, std::ios::beg);
-
-       var data = obj<array_seq<byte, number>>(size_t(file_size));
-       var storage = (data.cast<array_seq<byte, number>>()->storage);
-       auto& arr = value<array<byte>>::to_reference(storage).data;
-
-       ifs.read((char*)arr, file_size);
-
-       return obj<string>(data);"))
-
 (defnative lock-memory []
   (on "defined ERMINE_STD_LIB"
       ("sys/mman.h")
@@ -1634,16 +1590,3 @@ class delayed final : public deref_i {
 
 (defn system-abort []
   "::abort();")
-
-(defn system-halt [code]
-  (forever (sleep 1000)))
-
-(defmacro configure-runtime! [& body]
-  `(native-define ~(->> (partition 2 body)
-                        (map #(str "#define " (first %) " " (second %) "\n"))
-                        (list))))
-
-(defmacro configure-ermine! [& body]
-  `(native-define ~(str "// build-conf-begin\n"
-                        "//" (str (apply hash-map body)) "\n"
-                        "// build-conf-end\n")))
