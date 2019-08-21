@@ -1,26 +1,3 @@
-(defmacro fn [& sig]
-  (let [name (if (symbol? (first sig)) (first sig) nil), body (if name (rest sig) sig)]
-    (if (vector? (first body))
-      (let [[args & body] body]
-        (new-fir-fn :name name :args args :body body))
-      ;; handle multi arity function
-      (let [fns   (map (fn* [body]
-                            (let [[args & body] body]
-                              (new-fir-fn :args args :body body)))
-                       body)
-            arity (map (fn* [body]
-                            (let [[args & body] body]
-                              (count (remove (fn* [arg] (= arg '&)) args))))
-                       body)
-            fns   (sort-by first (partition 2 (interleave arity fns)))
-            fns   (if (= (first (take-last 2 (second (second (last fns))))) '&)
-                    (let [switch (drop-last 1 fns), [[_ default]] (take-last 1 fns)]
-                      `(fir-defn-arity ~switch ~default))
-                    `(fir-defn-arity ~fns))]
-        (new-fir-fn :escape false :name name :body [fns])))))
-
-(defmacro defn [name & body] `(def ~name (fn ~@body)))
-
 (defobject "
 struct seekable_i {
   virtual var cons(ref x) = 0;
@@ -101,28 +78,6 @@ bool var::equals(ref o) const {
   else
     return get()->equals(o);
 }
-")
-
-(defobject "
-struct pointer final : object {
-  type_t type() const final { return type_id<pointer>; }
-
-  void* payload;
-
-  explicit pointer(void* p) : payload(p) { }
-
-  bool equals(ref o) const final {
-    return (payload == o.cast<pointer>()->payload);
-  }
-
-  template <typename T> static T* to_pointer(ref v) {
-    return (T*)v.cast<pointer>()->payload;
-  }
-
-  template <typename T> static T& to_reference(ref v) {
-    return *(pointer::to_pointer<T>(v));
-  }
-};
 ")
 
 (defobject "
@@ -575,33 +530,6 @@ typedef d_list map_t;
 (defn keys [m] "return m.cast<map_t>()->keys();")
 
 (defobject "
-struct keyword final : lambda_i {
-  type_t type() const final { return type_id<keyword>; }
-
-  const number_t hash;
-
-  static constexpr number_t hash_key(const char* key) {
-    return *key ? (number_t)*key + hash_key(key + 1) : 0;
-  }
-
-  explicit keyword(number_t w) : hash(w) { }
-  explicit keyword(const char* str): hash(hash_key(str)) { }
-
-  bool equals(ref o) const final { return (hash == o.cast<keyword>()->hash); }
-
-  var invoke(ref args) const final {
-    ref map = rt::first(args);
-    ref map_args = rt::cons(var((object*)this), rt::rest(args));
-
-    if (map.is_type(type_id<map_t>))
-      return map.cast<map_t>()->val_at(map_args);
-    else
-      return nil();
-  }
-};
-")
-
-(defobject "
 struct string final : object, seekable_i {
   type_t type() const final { return type_id<string>; }
 
@@ -765,11 +693,13 @@ struct atomic final : deref_i {
 
 (defn = [& args]
   "var curr = rt::first(args);
+
    for_each(it, rt::rest(args)) {
      if (curr != it)
        return cached::false_o;
      curr = it;
    }
+
    return cached::true_o;")
 
 (defn identical? [x y] "return (x.get() == y.get()) ? cached::true_o : cached::false_o;")
