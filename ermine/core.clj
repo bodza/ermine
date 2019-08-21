@@ -1,5 +1,5 @@
 (ns ermine.core
-  (:refer-clojure :exclude [compile])
+  (:refer-clojure :only [= and apply assoc assoc-in atom coll? comp concat conj cons count declare defn deref doseq double drop drop-while empty? every? false? filter first flatten fn gensym hash-map hash-set instance? interleave interpose into keys keyword? last let letfn list list? loop map map? map-indexed meta name nil? not number? odd? or partition pop read-string reduce remove repeat rest second seq seq? set? str string? swap! symbol symbol? take-while true? vals vector vector? with-meta zipmap  *ns* *print-length* .. intern]) (:require [clojure.core :as -])
   (:import (org.apache.commons.io FileUtils)
            (org.apache.commons.lang StringEscapeUtils)
            (org.antlr.stringtemplate StringTemplate))
@@ -12,31 +12,20 @@
 (defn stringify [any]
   (if (keyword? any) (name any) (str any)))
 
-(declare kv-to-sv)
-(declare scan-kv-to-sv)
-
 (defn each-kv-to-sv [each]
   (if (map? each)
-    (kv-to-sv each)
+    (let [m (into (hash-map) each)]
+      (zipmap
+       (map stringify (keys m))
+       (map each-kv-to-sv (vals m))))
     (if (or (vector? each) (list? each) (seq? each) (set? each))
-      (scan-kv-to-sv each)
+      (map each-kv-to-sv each)
       each)))
-
-(defn scan-kv-to-sv [coll]
-  (map each-kv-to-sv coll))
-
-(defn kv-to-sv [mp]
-  (let [m (into (hash-map) mp)
-        k (keys m)
-        v (vals m)]
-    (zipmap
-     (map stringify k)
-     (scan-kv-to-sv v))))
 
 (defn render-template [template & kvs]
   (let [st (StringTemplate. template)]
     (doseq [[k v] (apply hash-map kvs)]
-      (.setAttribute st (stringify (name k)) (each-kv-to-sv v)))
+      (.setAttribute st k (each-kv-to-sv v)))
     (.toString st)))
 
 (defn read-file [f] (FileUtils/readFileToString (io/file f)))
@@ -105,14 +94,12 @@
         (fn [[_ & fun]] (cons 'fir-defn-stack fun)))))
 
 (defn let-closure [bindings body]
-  (cond
-    (empty? bindings)
-      (list (apply list 'fn [] body))
-    (odd? (count bindings))
+  (if (empty? bindings)
+    (list (apply list 'fn [] body))
+    (if (odd? (count bindings))
       (throw (Error. (str "let requires an even number of forms in binding vector => " bindings)))
-    :else
       (letfn [(close [[arg val] & more] (list (apply list 'fn [arg] (if (seq more) (list (apply close more)) body)) val))]
-        (apply close (partition 2 bindings)))))
+        (apply close (partition 2 bindings))))))
 
 (defn fn-made-unique [args body]
   (if (string? (first body))
@@ -129,7 +116,7 @@
 
 (defn fn-defined? [fns env args body]
   (let [name ((deref fns) (concat [env args] body))]
-    (when name
+    (if name
       (apply list 'fir-fn-heap name env))))
 
 (defn define-fn [fns env name args body]
@@ -170,59 +157,30 @@
 (defn compile [form]
   (symbol-conversion (escape-analysis (fn->lift (expand-macros (concat (read-ermine "ermine/lang.clj") form))))))
 
-(defmulti emit (fn [f _]
-                 (cond (form? 'fir_defn_heap f)  'fir_defn_heap
-                       (form? 'fir_defn_stack f) 'fir_defn_stack
-                       (form? 'fir_fn_heap f)    'fir_fn_heap
-                       (form? 'fir_fn_stack f)   'fir_fn_stack
-                       (form? 'list f)           'list
-                       (form? 'defobject f)      'defobject
-                       (form? 'if f)             'if
-                       (form? 'def f)            'def
-                       (symbol? f)               :symbol
-                       (number? f)               :number
-                       (nil? f)                  :nil
-                       (string? f)               :string
-                       (or (true? f) (false? f)) :boolean
-                       (seq? f)                  :invoke-fn
-                       :else                     :unsupported-form)))
-
-(defmethod emit :unsupported-form [form _] (throw (Error. (str "unsupported form => " form))))
+(declare emit)
 
 (defn emit-ast [ast state]
   (reduce (fn [h v] (conj h (emit v state))) (vector) ast))
 
 (defn emit-source [form]
-  (let [state (atom (hash-map :objects (vector), :symbols (hash-set), :lambdas (vector)))
+  (let [state (atom (hash-map :symbols (hash-set), :lambdas (vector)))
         ast (compile form)
         body (emit-ast ast state)]
     (assoc (deref state) :body body)))
 
-(defmethod emit :symbol [form _] (str form))
-
-(defmethod emit :string [form _] (str "obj<string>(\"" (escape-string form) "\"," (count form) ")"))
-
-(defmethod emit :boolean [form _] (if (true? form) "cached::true_o" "cached::false_o"))
-
-(defmethod emit :nil [form _] "nil()")
-
-(defmethod emit :number [form _] (str "obj<number>(" (double form) ")"))
-
-(defmethod emit 'def [[_ name & form] state]
+(defn emit--def [[_ name & form] state]
   (append-to! state [:symbols] name)
   (str "(" name " = " (apply str (emit-ast form state)) ")"))
 
-(defmethod emit 'if [[_ test then else] state]
+(defn emit--if [[_ test then else] state]
   (let [test (emit test state)
         then (emit then state)
         else (if (nil? else) "nil()" (emit else state))]
     (apply str "(" test " ? " then " : " else ")")))
 
-(defmethod emit 'list [[_ & args] state] (str "rt::list(" (apply str (interpose ", " (emit-ast args state))) ")"))
+(defn emit--list [[_ & args] state] (str "runtime::list(" (apply str (interpose ", " (emit-ast args state))) ")"))
 
-(defmethod emit 'defobject [[_ spec] state] (append-to! state [:objects] spec))
-
-(defn norm-fn-env [env] (remove (fn [%] (or (= % '&) (= % '_) (= % :as))) (flatten env)))
+(defn norm-fn-env [env] (remove (fn [%] (or (= % '&) (= % '_))) (flatten env)))
 
 (defn new-fn-heap [[_ name & env]] (str "obj<" name ">(" (apply str (interpose ", " (norm-fn-env env))) ")"))
 (defn new-fn-stack [[_ name & env]] (str name "(" (apply str (interpose ", " (norm-fn-env env))) ")"))
@@ -231,89 +189,80 @@
 
 (declare destructure-arguments)
 
-(defn destructure-nth-rest [parent pos]
-  (reduce (fn [h v] (str v "(" h ")")) parent (repeat pos "rt::rest")))
+(defn destructure-nth-rest [parent i]
+  (reduce (fn [h v] (str v "(" h ")")) parent (repeat i "runtime::rest")))
 
-(defn destructure-nth [parent pos]
-  (str "rt::first(" (destructure-nth-rest parent pos) ")"))
+(defn destructure-nth [parent i]
+  (str "runtime::first(" (destructure-nth-rest parent i) ")"))
 
-(defn destructure-get [name parent key]
-  (str "ref " name " = " parent ".cast<map_t>()->val_at(rt::list(" (emit key nil) "));"))
-
-(defn new-fn-arg [name parent pos]
-  (let [value (destructure-nth parent pos)]
+(defn new-fn-arg [name parent i]
+  (let [value (destructure-nth parent i)]
     (if (= (:tag (meta name)) 'number_t)
       (str "number_t " name " = number::to<number_t>(" value ")")
       (str "ref " name " = " value))))
 
-(defn new-fn-var-arg [name parent pos]
-  (str "ref " name " = " (destructure-nth-rest parent pos)))
-
-(defn destructure-associative [name parent pos]
-  (let [tmp# (gensym)]
-    [(new-fn-arg tmp# parent pos) (map (fn [[s k]] (destructure-get s tmp# k)) name)]))
+(defn new-fn-var-arg [name parent i]
+  (str "ref " name " = " (destructure-nth-rest parent i)))
 
 (defn destructure-sequential [args parent]
   (reduce
-   (fn [h [pos name]]
-     (let [name (cond
-                  (symbol? name)
-                    (new-fn-arg name parent pos)
-                  (form? 'fir_destructure_associative name)
-                    (let [[_ & args] name, args (apply hash-map (flatten (remove (fn [%] (= (first %) '_)) (partition 2 args))))]
-                      (destructure-associative args parent pos))
-                  (coll? name)
-                    (destructure-arguments name (destructure-nth parent pos)))]
-       (conj h name))) (vector) args))
+    (fn [v [i name]]
+      (let [name (if (symbol? name)
+                   (new-fn-arg name parent i)
+                   (if (coll? name)
+                     (destructure-arguments name (destructure-nth parent i))))]
+        (conj v name))) (vector) args))
 
-(defn destructure-var-args [name parent pos]
-  (cond (nil?    name) (vector)
-        (symbol? name) (new-fn-var-arg name parent pos)
-        (coll?   name) (let [tmp# (gensym)]
-                         [(new-fn-var-arg tmp# parent pos) (destructure-arguments name tmp#)])))
-
-(defn destructure-as-arg [name parent]
-  (if (symbol? name) (new-fn-var-arg name parent 0) (vector)))
+(defn destructure-var-args [name parent i]
+  (if (nil? name)
+    (vector)
+    (if (symbol? name)
+      (new-fn-var-arg name parent i)
+      (if (coll? name)
+        (let [tmp# (gensym)]
+          (vector (new-fn-var-arg tmp# parent i) (destructure-arguments name tmp#)))))))
 
 (defn destructure-arguments
   ([args] (flatten (destructure-arguments args "_args_")))
   ([args parent]
    (let [t-args       args
-         args         (take-while (fn [%] (and (not (= % '&)) (not (= % :as)))) t-args)
+         args         (take-while (fn [%] (not (= % '&))) t-args)
          var-args     (second (drop-while (fn [%] (not (= % '&))) t-args))
-         as-arg       (second (drop-while (fn [%] (not (= % :as))) t-args))
-         args-indexed (remove (fn [%] (= (second %) '_)) (map-indexed (fn [p v] [p v]) args))
-         as-arg       (destructure-as-arg as-arg parent)
+         args-indexed (remove (fn [%] (= (second %) '_)) (map-indexed (fn [i v] [i v]) args))
          var-args     (destructure-var-args var-args parent (count args))
          args         (destructure-sequential args-indexed parent)]
-     [args var-args as-arg])))
-
-(defmethod emit :invoke-fn [[fun & args] state] (invoke-fn (emit fun state) (emit-ast args state)))
-
-(defmethod emit 'fir_fn_heap [f _] (new-fn-heap f))
-
-(defmethod emit 'fir_fn_stack [f _] (new-fn-stack f))
+     (vector args var-args (vector)))))
 
 (defn emit-lambda [name env args body state]
-  (let [body (cond
-              (empty? body)
-                ["return nil()"]
-              (ffi-fn? body)
-                (let [body (apply str body)]
-                  (cond
-                    (.contains body "__result") ["var __result" body "return __result"]
-                    (.contains body "return") [body]
-                    :else [body "return nil()"]))
-              :else
-                (let [body (emit-ast body state)]
-                  (conj (pop body) (str "return " (last body)))))
+  (let [body (if (empty? body)
+               ["return nil()"]
+               (if (ffi-fn? body)
+                 (let [body (apply str body)]
+                   (if (.contains body "return") [body] [body "return nil()"]))
+                 (let [body (emit-ast body state)]
+                   (conj (pop body) (str "return " (last body))))))
         env  (norm-fn-env env)
         vars (destructure-arguments args)]
     (hash-map :name name :env env :args args :vars vars :body body)))
 
-(defmethod emit 'fir_defn_heap [[_ name env args & body] state] (append-to! state [:lambdas] (emit-lambda name env args body state)))
+(defn emit--defn-heap [[_ name env args & body] state] (append-to! state [:lambdas] (emit-lambda name env args body state)))
+(defn emit--defn-stack [[_ name env args & body] state] (append-to! state [:lambdas] (assoc (emit-lambda name env args body state) :stack true)))
 
-(defmethod emit 'fir_defn_stack [[_ name env args & body] state] (append-to! state [:lambdas] (assoc (emit-lambda name env args body state) :stack true)))
+(defn emit [f state]
+  (if (form? 'fir_defn_heap f)  (emit--defn-heap f state)
+    (if (form? 'fir_defn_stack f) (emit--defn-stack f state)
+      (if (form? 'fir_fn_heap f)    (new-fn-heap f)
+        (if (form? 'fir_fn_stack f)   (new-fn-stack f)
+          (if (form? 'list f)           (emit--list f state)
+            (if (form? 'if f)             (emit--if f state)
+              (if (form? 'def f)            (emit--def f state)
+                (if (symbol? f)               (str f)
+                  (if (number? f)               (str "obj<number>(" (double f) ")")
+                    (if (nil? f)                  "nil()"
+                      (if (string? f)               (str "obj<string>(\"" (escape-string f) "\", " (count f) ")")
+                        (if (or (true? f) (false? f)) (if (true? f) "cached::true_o" "cached::false_o")
+                          (if (seq? f)                  (let [[fun & args] f] (invoke-fn (emit fun state) (emit-ast args state)))
+                                                          (throw (Error. (str "unsupported form => " f)))))))))))))))))
 
 (defn lambda-definitions [fns]
   (render-template
@@ -331,7 +280,7 @@
 
         var invoke (ref _args_) const $if(!fn.stack)$ final $endif$ ;
       };};separator=\"\n\n\"$"
-   :fns fns))
+   "fns" fns))
 
 (defn lambda-implementations [fns]
   (render-template
@@ -343,76 +292,11 @@
         $fn.body:{$it$;} ;separator=\"\n\"$
       }
      };separator=\"\n\n\"$"
-   :fns fns))
+   "fns" fns))
 
 (defn program-template [source]
-  (let [{:keys [body lambdas symbols objects]} source
-        file-ns "_main"
-        main    (render-template
-                 "
-#if !defined(ERMINE_DISABLE_STD_MAIN)
-  int main()
-  {
-    using namespace ermine;
-    ERMINE_ALLOCATOR::init();
-
-    $file$::main();
-
-   #if defined(ERMINE_PROGRAM_MAIN)
-    run(ERMINE_PROGRAM_MAIN);
-   #endif
-
-    return 0;
-  }
-#endif
+  (str
 "
-                        :file file-ns)]
-    (render-template
-     "
-        #ifndef ERMINE_RUNTIME_H
-        #define ERMINE_RUNTIME_H
-         $ermine_h$
-        #endif
-
-        // Objects
-        namespace ermine {
-         $objects:{$it$} ;separator=\"\n\"$
-        }
-
-        // Symbols
-        namespace $file$ {
-         using namespace ermine;
-
-         $symbols:{var $it$;} ;separator=\"\n\"$
-        }
-
-        // Runtime Implementations
-        #ifndef ERMINE_RUNTIME_CPP
-        #define ERMINE_RUNTIME_CPP
-         $ermine_cpp$
-        #endif
-
-        // Lambda Prototypes
-        namespace $file$ {
-          $lambda_classes:{$it$} ;separator=\"\n\"$
-        }
-
-        // Lambda Implementations
-        namespace $file$ {
-          $lambda_bodies:{$it$} ;separator=\"\n\"$
-        }
-
-        // Program Run
-        namespace $file$ {
-         void main() {
-          $body:{$it$;} ;separator=\"\n\"$
-         }
-        }
-
-        $ermine_main$"
-     :file           file-ns
-     :ermine_h       "
-// Detect Hardware
 #define ERMINE_CONFIG_SAFE_MODE TRUE
 
 #if defined(__APPLE__) || defined(_WIN32) || defined(__linux__) || defined(__unix__) || defined(_POSIX_VERSION)
@@ -425,32 +309,31 @@
 #endif
 
 #ifdef ERMINE_STD_LIB
- #include <iostream>
- #include <iomanip>
- #include <sstream>
- #include <cstdio>
- #include <cstdlib>
- #include <cstddef>
- #include <cmath>
- #include <vector>
- #include <algorithm>
- #include <chrono>
- #include <atomic>
- #include <mutex>
- #include <thread>
- #include <future>
+  #include <iostream>
+  #include <iomanip>
+  #include <sstream>
+  #include <cstdio>
+  #include <cstdlib>
+  #include <cstddef>
+  #include <cmath>
+  #include <vector>
+  #include <algorithm>
+  #include <chrono>
+  #include <atomic>
+  #include <mutex>
+  #include <thread>
+  #include <future>
 #endif
 
 #ifdef ERMINE_CONFIG_SAFE_MODE
- #include <stdio.h>
- #include <stdlib.h>
- #include <stdint.h>
- #include <math.h>
+  #include <stdio.h>
+  #include <stdlib.h>
+  #include <stdint.h>
+  #include <math.h>
 #endif
 
 namespace ermine {
   namespace runtime { }
-  namespace rt = runtime;
 
   // Types
   typedef uint8_t byte;
@@ -737,7 +620,7 @@ namespace ermine {
 
     template <typename... Ts>
     constexpr size_t max_sizeof() {
-      return rt::max(sizeof(Ts)...);
+      return runtime::max(sizeof(Ts)...);
     }
   }
 
@@ -1167,7 +1050,7 @@ namespace ermine {
       inline var range(number_t low, number_t high);
     }
 
-  #define for_each(x,xs) for (var _tail_ = rt::rest(xs), x = rt::first(xs); !_tail_.is_nil(); x = rt::first(_tail_), _tail_ = rt::rest(_tail_))
+  #define for_each(x,xs) for (var _tail_ = runtime::rest(xs), x = runtime::first(xs); !_tail_.is_nil(); x = runtime::first(_tail_), _tail_ = runtime::rest(_tail_))
 
   template <typename T, typename... Args>
   inline var run(T const & fun, Args const & ... args);
@@ -1182,10 +1065,635 @@ namespace ermine {
     inline var apply(ref fun, ref args);
   }
 }
+
+// Objects
+namespace ermine {
+  struct seekable_i {
+    virtual var cons(ref x) = 0;
+    virtual var first() = 0;
+    virtual var rest() = 0;
+
+    static bool equals(var lhs, var rhs) {
+      for ( ; ; lhs = runtime::rest(lhs), rhs = runtime::rest(rhs)) {
+        ref lf = runtime::first(lhs);
+        ref rf = runtime::first(rhs);
+
+        if (lf.is_nil() && rf.is_nil())
+          return true;
+
+        if (lf != rf)
+          return false;
+      }
+    }
+  };
+
+  struct lambda_i : object {
+    type_t type() const { return type_id<lambda_i>; }
+
+    virtual var invoke(ref args) const = 0;
+  };
+
+  struct deref_i : object {
+    virtual var deref() = 0;
+  };
+
+  struct boolean final : object {
+    type_t type() const final { return type_id<boolean>; }
+
+    const bool value;
+
+    explicit boolean(bool b) : value(b) { }
+
+    bool container() const {
+      return value;
+    }
+
+    bool equals(ref o) const final {
+      return (value == o.cast<boolean>()->container());
+    }
+  };
+
+  namespace cached {
+    const var true_o = obj<::ermine::boolean>(true);
+    const var false_o = obj<::ermine::boolean>(false);
+  }
+
+  var::operator bool() const {
+    if (obj == nullptr)
+      return false;
+    else if (obj->type() == (type_t)type_id<boolean>)
+      return cast<boolean>()->container();
+    else
+      return true;
+  }
+
+  bool var::equals(ref o) const {
+    if (get() == o.get())
+      return true;
+    else if (is_nil() || o.is_nil())
+      return false;
+    else if (runtime::is_seqable(*this) && runtime::is_seqable(o))
+      return seekable_i::equals(*this, o);
+    else if (obj->type() != o.get()->type())
+      return false;
+    else
+      return get()->equals(o);
+  }
+
+  template <typename T>
+  struct value final : object {
+    type_t type() const final { return type_id<value>; }
+
+    T payload;
+
+    template <typename... Args>
+    explicit value(Args&&... args) : payload(static_cast<Args&&>(args)...) { }
+
+    T to_value() const {
+      return payload;
+    }
+
+    static T to_value(ref v) {
+      return v.cast<value<T>>()->payload;
+    }
+
+    T& to_reference() {
+      return payload;
+    }
+
+    static T& to_reference(ref v) {
+      return v.cast<value<T>>()->to_reference();
+    }
+  };
+
+  struct number final : object {
+    type_t type() const final { return type_id<number>; }
+
+    const real_t n;
+
+    template <typename T> explicit number(T x) : n(real_t(x)) { }
+
+    bool equals(ref o) const final {
+      return (runtime::abs(n - number::to<real_t>(o)) < real_epsilon);
+    }
+
+    template <typename T> static T to(ref v) {
+      return (T)v.cast<number>()->n;
+    }
+  };
+
+  struct empty_sequence final : object {
+    type_t type() const final { return type_id<empty_sequence>; }
+  };
+
+  namespace cached {
+    const var empty_sequence_o = obj<::ermine::empty_sequence>();
+  }
+
+  struct sequence final : object, seekable_i {
+    type_t type() const final { return type_id<sequence>; }
+
+    const var next;
+    const var data;
+
+    explicit sequence(ref d = nil(), ref n = nil()) : next(n), data(d) { }
+
+    virtual seekable_i* cast_seekable_i() { return this; }
+
+    var cons(ref x) final {
+      return obj<sequence>(x, var(this));
+    }
+
+    var first() final {
+      return data;
+    }
+
+    var rest() final {
+      return next;
+    }
+
+    template <typename T> static T to(ref) {
+      T::unimplemented_function;
+    }
+
+    template <typename T> static var from(T) {
+      T::unimplemented_function;
+      return nil();
+    }
+  };
+
+  namespace runtime {
+    inline var list() {
+      return cached::empty_sequence_o;
+    }
+
+    inline var list(ref v) {
+      return obj<sequence>(v, cached::empty_sequence_o);
+    }
+
+    template <typename... Args>
+    inline var list(ref first, Args const & ... args) {
+      return obj<sequence>(first, list(args...));
+    }
+  }
+
+  #ifdef ERMINE_STD_LIB
+  typedef ::std::vector<var> std_vector;
+
+  template <> std_vector sequence::to(ref v) {
+    std_vector ret;
+    for_each(i, v)
+      ret.push_back(i);
+    return ret;
+  }
+
+  template <> var sequence::from(std_vector v) {
+    var ret;
+    std::vector<var>::reverse_iterator rit;
+    for (rit = v.rbegin(); rit != v.rend(); rit++)
+      ret = runtime::cons(*rit, ret);
+    return ret;
+  }
+  #endif
+
+  struct lazy_sequence final : object, seekable_i {
+    type_t type() const final { return type_id<lazy_sequence>; }
+
+    mutex lock;
+    bool cache;
+    var thunk;
+    var data;
+    var seq;
+
+    explicit lazy_sequence(ref t, bool c = false) : cache(c), thunk(t) { }
+
+    explicit lazy_sequence(ref d, ref t, bool c = false) : cache(c), thunk(t), data(d) { }
+
+    virtual seekable_i* cast_seekable_i() { return this; }
+
+    void yield() {
+      if (thunk.is_nil())
+        return;
+
+      seq = run(thunk);
+
+      if (data.is_nil()) {
+        data = runtime::first(seq);
+        seq = runtime::rest(seq);
+      }
+
+      thunk = nil();
+    }
+
+    var cons(ref x) final {
+      lock_guard guard(lock);
+
+      if (data.is_nil())
+        return obj<lazy_sequence>(x, thunk, cache);
+
+      return obj<sequence>(x, var((object*)this));
+    }
+
+    var first() final {
+      lock_guard guard(lock);
+
+      if (cache)
+        yield();
+      else if (data.is_nil())
+        return runtime::first(run(thunk));
+
+      return data;
+    }
+
+    var rest() final {
+      lock_guard guard(lock);
+      var tail;
+
+      if (cache) {
+        yield();
+        tail = seq;
+      } else {
+        tail = run(thunk);
+        if (data.is_nil())
+          return runtime::rest(tail);
+      }
+
+      if (tail.is_nil())
+        return runtime::list();
+      else
+        return tail;
+    }
+  };
+
+  template <typename element_t, typename object_t>
+  struct array_seq : object, seekable_i {
+    type_t type() const final { return type_id<array_seq>; }
+
+    typedef array<element_t> array_t;
+    typedef value<array_t> value_t;
+
+    size_t pos;
+    var storage;
+
+    explicit array_seq(const element_t* src, size_t s = 0) : pos (0), storage(obj<value_t>(src, s)) { }
+
+    explicit array_seq(var b, size_t p = 0) : pos(p), storage(b) { }
+
+    explicit array_seq(size_t size) : pos(0), storage(obj<value_t>(size)) { }
+
+    virtual seekable_i* cast_seekable_i() { return this; }
+
+    var cons(ref x) final {
+      return obj<sequence>(x, var(this));
+    }
+
+    var first() final {
+      array_t& b = value_t::to_reference(storage);
+
+      return obj<object_t>(b[pos]);
+    }
+
+    var rest() final {
+      array_t& b = value_t::to_reference(storage);
+
+      if (pos < b.size() - 1)
+        return obj<array_seq>(storage, pos + 1);
+      else
+        return runtime::list();
+    }
+  };
+
+  template <>
+  struct array<var> {
+    size_t _size {0};
+
+    var* allocate() {
+      var* storage = static_cast<var*>(ERMINE_ALLOCATOR::allocate(_size * sizeof(var))) ;
+      for (size_t i = 0; i < _size; i++)
+        new (&storage[i]) var();
+      return storage;
+    }
+
+    var* data { nullptr };
+
+    explicit inline array(size_t s = 0) : _size(s), data(allocate()) { }
+
+    inline array(array&& m) : _size(m.size()), data(m.data) { m.data = nullptr; }
+
+    inline array(array& m) : _size(m.size()), data(allocate()) {
+      for (size_t i = 0; i < _size; i++)
+        data[i] = m.data[i];
+    }
+
+    ~array() {
+      for (size_t i = 0; i < size(); i++)
+        (&data[i])->~var();
+      ERMINE_ALLOCATOR::free(data);
+    }
+
+    inline array& operator= (array&& x) {
+      data = x.data;
+      _size = x._size;
+      x.data = nullptr;
+      return *this;
+    }
+
+    inline var& operator[] (size_t idx)      { return data[idx]; }
+    inline var operator[] (size_t idx) const { return data[idx]; }
+
+    inline var*   begin() const { return &data[0];     }
+    inline var*   end()   const { return &data[_size]; }
+    inline size_t size()  const { return _size;        }
+  };
+
+  typedef array<var> var_array_t;
+  typedef value<var_array_t> var_array;
+  typedef array_seq<var,var> var_array_seq;
+
+  template <>
+  struct array_seq<var,var> : object, seekable_i {
+    type_t type() const final { return type_id<array_seq>; }
+
+    size_t pos {0};
+
+    inline static void into_aux(ref) { }
+
+    template <typename... Args>
+    inline static void into_aux(ref arr, ref first, Args... rest) {
+      auto& data = var_array::to_reference(arr);
+      data[data.size() - sizeof...(rest) - 1] = first;
+      into_aux(arr, rest...);
+    }
+
+    var storage;
+
+    explicit array_seq(var b, size_t p = 0) : pos(p), storage(b) { }
+
+    virtual seekable_i* cast_seekable_i() { return this; }
+
+    var cons(ref x) final {
+      return obj<sequence>(x, var(this));
+    }
+
+    var first() final {
+      var_array_t& b = var_array::to_reference(storage);
+
+      return b[pos];
+    }
+
+    var rest() final {
+      var_array_t& b = var_array::to_reference(storage);
+
+      if (pos < b.size() - 1)
+        return obj<array_seq>(storage, pos + 1);
+      else
+        return runtime::list();
+    }
+
+    template <typename... Args>
+    static inline var into(Args... rest) {
+      var arr = obj<var_array>(sizeof...(rest));
+      into_aux(arr, rest...);
+      return obj<var_array_seq>(arr);
+    }
+  };
+
+  namespace runtime {
+    template <typename... Args>
+    static inline var dense_list(Args... rest) {
+      return var_array_seq::into(rest...);
+    }
+  }
+
+  struct d_list final : lambda_i, seekable_i {
+    type_t type() const final { return type_id<d_list>; }
+
+    var data;
+
+    explicit d_list() : data(runtime::list(runtime::list())) { }
+
+    explicit d_list(ref l) : data(l) { }
+
+    var assoc(ref k, ref v) const {
+      ref map = dissoc_aux(k);
+      ref _keys = runtime::first(map);
+      ref _values = runtime::rest(map);
+
+      return obj<d_list>(runtime::cons(runtime::cons(k, _keys), runtime::cons(v, _values)));
+    }
+
+    var dissoc_aux(ref k) const {
+      ref _keys = runtime::first(data);
+      var _values = runtime::rest(data);
+
+      var new_keys;
+      var new_values;
+
+      for_each(i, _keys) {
+        if (i != k)
+        {
+          new_keys = runtime::cons(i, new_keys);
+          new_values = runtime::cons(runtime::first(_values), new_values);
+          _values = runtime::rest(_values);
+        }
+      }
+
+      return runtime::cons(new_keys, new_values);
+    }
+
+    var dissoc(ref k) const {
+      return obj<d_list>(dissoc_aux(k));
+    }
+
+    var val_at(ref args) const {
+      ref key = runtime::first(args);
+      ref not_found = runtime::first(runtime::rest(args));
+
+      ref _keys = runtime::first(data);
+      var _values = runtime::rest(data);
+
+      for_each(i, _keys) {
+        if (key == i)
+          return runtime::first(_values);
+
+        _values = runtime::rest(_values);
+      }
+
+      if (!not_found.is_nil())
+        return not_found;
+      else
+        return nil();
+    }
+
+    var invoke(ref args) const final {
+      return val_at(args);
+    }
+
+    var vals () const { return runtime::rest(data); }
+    var keys () const { return runtime::first(data); }
+
+    virtual seekable_i* cast_seekable_i() { return this; }
+
+    var cons(ref v) final {
+      return runtime::list(v, data);
+    }
+
+    var first() final {
+      ref _keys = runtime::first(data);
+      ref _values = runtime::rest(data);
+
+      return runtime::list(runtime::first(_keys), runtime::first(_values));
+    }
+
+    var rest() final {
+      ref _keys = runtime::first(data);
+      ref _values = runtime::rest(data);
+
+      if (runtime::rest(_keys).is_type(type_id<empty_sequence>))
+        return runtime::list();
+      else
+        return obj<d_list>(runtime::cons(runtime::rest(_keys), runtime::rest(_values)));
+    }
+  };
+
+  template <>
+  inline var obj<d_list>(var keys, var vals) {
+    void* storage = ERMINE_ALLOCATOR::allocate<d_list>();
+
+    return var(new(storage) d_list(runtime::cons(keys, vals)));
+  }
+
+  #if !defined(ERMINE_MAP_TYPE)
+  typedef d_list map_t;
+  #endif
+
+  struct string final : object, seekable_i {
+    type_t type() const final { return type_id<string>; }
+
+    typedef array_seq<byte, number> array_seq_t;
+    typedef array<byte> array_t;
+
+    var data;
+
+    void from_char_pointer(const char* str, int length) {
+      data = obj<array_seq_t>((byte*)str, (size_t)(length + 1));
+
+      var seq = (data.cast<array_seq_t>()->storage);
+      auto & arr = value<array_t>::to_reference(seq).data;
+      arr[length] = 0;
+    }
+
+    explicit string() : data(runtime::list()) { }
+
+    explicit string(ref s) : data(s) { }
+
+    explicit string(const char* str) {
+      int length;
+      for (length = 0; str[length] != 0; ++length)
+        ;
+      from_char_pointer(str, length);
+    }
+
+    explicit string(const char* str, number_t length) { from_char_pointer(str, length); }
+
+    virtual seekable_i* cast_seekable_i() { return this; }
+
+    var cons(ref x) final {
+      return obj<string>(runtime::cons(x, data));
+    }
+
+    var first() final {
+      return runtime::first(data);
+    }
+
+    var rest() final {
+      ref r = runtime::rest(data);
+
+      if (r.is_type(type_id<array_seq_t>) && runtime::first(r) == obj<number>(0))
+        return runtime::list();
+      else if (!r.is_type(type_id<empty_sequence>))
+        return obj<string>(r);
+      else
+        return runtime::list();
+    }
+
+    static var pack(ref s) {
+      if (s.cast<string>()->data.is_type(type_id<array_seq_t>))
+        return s.cast<string>()->data;
+
+      size_t size = runtime::count(s);
+      var packed_array = obj<value<array_t>>(size + 1);
+      auto& packed_data = value<array_t>::to_reference(packed_array).data;
+
+      size_t pos = 0;
+      for_each(c, s) {
+        packed_data[pos] = number::to<byte>(c);
+        pos++;
+      }
+      packed_data[pos] = 0;
+
+      return obj<array_seq_t>(packed_array);
+    }
+
+    static char* c_str(ref s) {
+      var seq = (s.cast<array_seq_t>()->storage);
+      auto& str = value<array<byte>>::to_reference(seq).data;
+      return (char*) str;
+    }
+
+    template <typename T> static T to(ref) { T::unimplemented_function; }
+  };
+
+  #ifdef ERMINE_STD_LIB
+  template <>
+  inline var obj<string>(std::string s) {
+    void* storage = ERMINE_ALLOCATOR::allocate<string>();
+    return var(new(storage) string(s.c_str(), (number_t)s.size()));
+  }
+
+  template <> ::std::string string::to(ref str) {
+    var packed = string::pack(str);
+    return std::string(string::c_str(packed));
+  }
+  #endif
+
+  struct atomic final : deref_i {
+    type_t type() const final { return type_id<atomic>; }
+
+    mutex lock;
+    var data;
+
+    explicit atomic(ref d) : data(d) { }
+
+    var swap(ref f, ref args) {
+      lock_guard guard(lock);
+      data = f.cast<lambda_i>()->invoke(runtime::cons(data, args));
+      return data;
+    }
+
+    var reset(ref newval) {
+      lock_guard guard(lock);
+      data = newval;
+      return data;
+    }
+
+    var deref() final {
+      lock_guard guard(lock);
+      return data;
+    }
+  };
+}
+
+// Symbols
+namespace _main {
+  using namespace ermine;
+
 "
-     :objects             objects
-     :symbols             symbols
-     :ermine_cpp          "
+    (apply str (map (fn [%] (str "var " % ";\n")) (:symbols source)))
+"
+}
+
+// Runtime Implementations
 namespace ermine {
   namespace runtime {
     inline bool is_seqable(ref coll) {
@@ -1211,7 +1719,7 @@ namespace ermine {
 
     inline var cons(ref x, ref seq) {
       if (seq.is_nil() || seq.is_type(type_id<empty_sequence>))
-        return rt::list(x);
+        return runtime::list(x);
       else
         return seq.cast<seekable_i>()->cons(x);
     }
@@ -1221,17 +1729,17 @@ namespace ermine {
         return nil();
 
       for (number_t i = 0; i < index; i++)
-        seq = rt::rest(seq);
+        seq = runtime::rest(seq);
 
-      return rt::first(seq);
+      return runtime::first(seq);
     }
 
     var nthrest(var seq, number_t index) {
       for (number_t i = 0; i < index; i++)
-        seq = rt::rest(seq);
+        seq = runtime::rest(seq);
 
       if (seq.is_nil())
-        return rt::list();
+        return runtime::list();
       else
         return seq;
     }
@@ -1239,7 +1747,7 @@ namespace ermine {
     inline size_t count(ref seq) {
       size_t acc = 0;
 
-      for (var tail = rt::rest(seq); !tail.is_nil(); tail = rt::rest(tail))
+      for (var tail = runtime::rest(seq); !tail.is_nil(); tail = runtime::rest(tail))
         acc++;
 
       return acc;
@@ -1265,7 +1773,7 @@ namespace ermine {
 
   template <typename T, typename... Args>
   inline var run(T const & fun, Args const & ... args) {
-    return fun.invoke(rt::list(args...));
+    return fun.invoke(runtime::list(args...));
   }
 
   template <typename T>
@@ -1280,17 +1788,17 @@ namespace ermine {
 
   template <typename... Args>
   inline var run(ref fun, Args const & ... args) {
-    return fun.cast<lambda_i>()->invoke(rt::list(args...));
+    return fun.cast<lambda_i>()->invoke(runtime::list(args...));
   }
 
   namespace runtime {
     inline var apply(ref f, ref args) {
-      if (rt::rest(args).is_type(type_id<empty_sequence>))
-        return f.cast<lambda_i>()->invoke(rt::first(args));
+      if (runtime::rest(args).is_type(type_id<empty_sequence>))
+        return f.cast<lambda_i>()->invoke(runtime::first(args));
 
       struct {
         var operator()(ref seq) const {
-          ref head = rt::first(seq);
+          ref head = runtime::first(seq);
 
           if (head.is_nil())
             return cached::empty_sequence_o;
@@ -1298,7 +1806,7 @@ namespace ermine {
           if (head.cast<seekable_i>())
             return head;
 
-          return rt::cons(head, (*this)(rt::rest(seq)));
+          return runtime::cons(head, (*this)(runtime::rest(seq)));
         }
       } spread;
 
@@ -1306,11 +1814,29 @@ namespace ermine {
     }
   }
 }
+
+namespace _main {
 "
-     :lambda_classes (lambda-definitions lambdas)
-     :lambda_bodies  (lambda-implementations lambdas)
-     :body           (remove empty? body)
-     :ermine_main    main)))
+    (lambda-definitions (:lambdas source))
+    (lambda-implementations (:lambdas source))
+"
+
+  void main() {
+"
+    (apply str (map (fn [%] (str % ";\n")) (remove empty? (:body source))))
+"
+  }
+}
+
+int main() {
+  using namespace ermine;
+  ERMINE_ALLOCATOR::init();
+
+  _main::main();
+
+  return 0;
+}
+"))
 
 (defn -main [& args]
     (write-file "./main.cpp" (program-template (emit-source (read-ermine "./main.clj")))))
