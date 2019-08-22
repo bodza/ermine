@@ -1,37 +1,281 @@
 (ns ermine.core
-  (:refer-clojure :only [= and apply assoc assoc-in atom coll? comp concat conj cons count declare defn deref doseq double drop drop-while empty? every? false? filter first flatten fn gensym hash-map hash-set instance? interleave interpose into keys keyword? last let letfn list list? loop map map? map-indexed meta name nil? not number? odd? or partition pop read-string reduce remove repeat rest second seq seq? set? str string? swap! symbol symbol? take-while true? vals vector vector? with-meta zipmap  *ns* *print-length* .. intern]) (:require [clojure.core :as -])
-  (:import (org.apache.commons.io FileUtils)
-           (org.apache.commons.lang StringEscapeUtils)
-           (org.antlr.stringtemplate StringTemplate))
-  (:require [clojure.java.io :as io]
-            [clojure.set :as set]
-            [clojure.walk :as walk]
+  (:refer-clojure :only [= and apply assoc atom coll? comp concat conj cons count declare defn deref double drop drop-while empty? every? false? filter first flatten fn gensym hash-map hash-set instance? interleave interpose into last let letfn list loop map map-indexed meta nil? not number? odd? or partition pop print read-line read-string reduce remove repeat repeatedly rest second seq seq? some? str string? swap! symbol symbol? take-while true? update vector with-meta  *ns* *print-length* .. intern]) (:require [clojure.core :as -])
+  (:require [clojure.set :refer [difference intersection]]
+            [clojure.string :refer [escape]]
+            [clojure.walk :refer [prewalk]]
             [fast-zip.core :as zip]
-            [flatland.ordered.map :as ordered-map]))
+            [flatland.ordered.map :refer [ordered-map]]))
 
-(defn stringify [any]
-  (if (keyword? any) (name any) (str any)))
+(def ermine-runtime '(
+  (defn deref [a] "return a.cast<deref_i>()->deref();")
 
-(defn each-kv-to-sv [each]
-  (if (map? each)
-    (let [m (into (hash-map) each)]
-      (zipmap
-       (map stringify (keys m))
-       (map each-kv-to-sv (vals m))))
-    (if (or (vector? each) (list? each) (seq? each) (set? each))
-      (map each-kv-to-sv each)
-      each)))
+  (defn assoc [m k v] "return m.cast<map_t>()->assoc(k, v);")
+  (defn dissoc [m k] "return m.cast<map_t>()->dissoc(k);")
 
-(defn render-template [template & kvs]
-  (let [st (StringTemplate. template)]
-    (doseq [[k v] (apply hash-map kvs)]
-      (.setAttribute st k (each-kv-to-sv v)))
-    (.toString st)))
+  (defn get [m & args] "return m.cast<map_t>()->val_at(args);")
 
-(defn read-file [f] (FileUtils/readFileToString (io/file f)))
-(defn write-file [f s] (FileUtils/writeStringToFile (io/file f) (.trim s)))
+  (defn vals [m] "return m.cast<map_t>()->vals();")
+  (defn keys [m] "return m.cast<map_t>()->keys();")
 
-(defn escape-string [s] (StringEscapeUtils/escapeJava s))
+  (defn atom [x] "return obj<atomic>(x)")
+
+  (defn swap! [a f & args] "return a.cast<atomic>()->swap(f, args);")
+  (defn reset! [a x] "return a.cast<atomic>()->reset(x);")
+
+  (defn lazy-seq! [f] "return obj<lazy_sequence>(f);")
+
+  (defn list [& s] "return s;")
+
+  (defn list? [x] "return x.is_type(type_id<sequence>) ? cached::true_o : cached::false_o;")
+
+  (defn seqable? [x] "return runtime::is_seqable(x) ? cached::true_o : cached::false_o;")
+
+  (defn cons [x s] "return runtime::cons(x, s);")
+
+  (defn first [s] "return runtime::first(s);")
+  (defn rest [s] "return runtime::rest(s);")
+
+  (defn second [s] (first (rest s)))
+
+  (defn nth [s ^number_t n] "return runtime::nth(s, n);")
+  (defn nthrest [s ^number_t n] "return runtime::nthrest(s, n);")
+
+  (defn reduce [f r s]
+     "var q = r;
+
+      for_each(i, s)
+        q = run(f, q, i);
+
+      return q;")
+
+  (defn apply [f & s] "return runtime::apply(f, s);")
+
+  (defn conj [coll & s] (reduce (fn [h v] (cons v h)) (if (nil? coll) (list) coll) s))
+
+  (defn reverse [s] (reduce (fn [h v] (cons v h)) (list) s))
+
+  (defn true? [x] "return (x) ? cached::true_o : cached::false_o;")
+  (defn false? [x] "return (!x) ? cached::true_o : cached::false_o;")
+
+  (defn nil? [x] "return x.is_nil() ? cached::true_o : cached::false_o;")
+
+  (defn not [x] "return (x) ? cached::false_o : cached::true_o;")
+
+  (defn = [& args]
+    "var a = runtime::first(args);
+
+     for_each(i, runtime::rest(args)) {
+       if (a != i)
+         return cached::false_o;
+       a = i;
+     }
+
+     return cached::true_o;")
+
+  (defn identical? [x y] "return (x.get() == y.get()) ? cached::true_o : cached::false_o;")
+
+  (defn < [& args]
+    "var a = runtime::first(args);
+
+     for_each(b, runtime::rest(args)) {
+       if (number::to<real_t>(a) >= number::to<real_t>(b))
+         return cached::false_o;
+       a = b;
+     }
+
+     return cached::true_o;")
+
+  (defn > [& args]
+    "var a = runtime::first(args);
+
+     for_each(b, runtime::rest(args)) {
+       if (number::to<real_t>(a) <= number::to<real_t>(b))
+         return cached::false_o;
+       a = b;
+     }
+
+     return cached::true_o;")
+
+  (defn >= [& args]
+    "var a = runtime::first(args);
+
+     for_each(b, runtime::rest(args)) {
+       if (number::to<real_t>(a) < number::to<real_t>(b))
+         return cached::false_o;
+       a = b;
+     }
+
+     return cached::true_o;")
+
+  (defn <= [& args]
+    "var a = runtime::first(args);
+
+     for_each(b, runtime::rest(args)) {
+       if (number::to<real_t>(a) > number::to<real_t>(b))
+         return cached::false_o;
+       a = b;
+     }
+
+     return cached::true_o;")
+
+  (defn count [s] "return obj<number>(runtime::count(s))")
+
+  (defn zero? [x] (= x 0))
+  (defn pos? [x] (> x 0))
+  (defn neg? [x] (< x 0))
+
+  (defn + [& args]
+    "real_t value(0.0);
+
+     for_each(i, args)
+       value = value + number::to<real_t>(i);
+
+     return obj<number>(value);")
+
+  (defn - [& args]
+    "var a = runtime::first(args);
+
+     real_t value = number::to<real_t>(a);
+     size_t count = 1;
+
+     for_each(i, runtime::rest(args)) {
+       value = (value - number::to<real_t>(i));
+       count++;
+     }
+
+     if (count == 1)
+       value = value * real_t(-1.0);
+
+     return obj<number>(value);")
+
+  (defn * [& args]
+    "real_t value(1.0);
+
+     for_each(i, args)
+       value = (value * number::to<real_t>(i));
+
+     return obj<number>(value);")
+
+  (defn inc [x] (+ x 1))
+  (defn dec [x] (- x 1))
+
+  (defn min [& args]
+    "var m = runtime::first(args);
+
+     for_each(i, runtime::rest(args))
+       if (number::to<real_t>(m) > number::to<real_t>(i))
+         m = i;
+
+     return m;")
+
+  (defn max [& args]
+    "var m = runtime::first(args);
+
+     for_each(i, runtime::rest(args))
+       if (number::to<real_t>(m) < number::to<real_t>(i))
+         m = i;
+
+     return m;")
+
+  (defn bit-and [^number_t x ^number_t y] "return obj<number>((x & y));")
+  (defn bit-not [^number_t x] "return obj<number>(~x);")
+  (defn bit-or [^number_t x ^number_t y] "return obj<number>((x | y));")
+  (defn bit-xor [^number_t x ^number_t y] "return obj<number>((x ^ y));")
+
+  (defn bit-shift-left [^number_t x ^number_t n] "return obj<number>((x << n));")
+  (defn bit-shift-right [^number_t x ^number_t n] "return obj<number>((x >> n));")
+
+  (defn identity [x] x)
+
+  (defn map [f coll]
+    (lazy-seq!
+      (fn []
+        (if (seqable? coll)
+          (cons (f (first coll)) (map f (rest coll)))))))
+
+  (defn range [^number_t n] "return runtime::range(0, n)")
+
+  (defn take [n coll]
+    (lazy-seq!
+      (fn []
+        (if (seqable? coll)
+          (if (> n 0)
+            (cons (first coll) (take (- n 1) (rest coll))))))))
+
+  (defn take-while [pred s]
+    (lazy-seq!
+      (fn []
+        (if (seqable? s)
+          (if (pred (first s))
+            (cons (first s) (take-while pred (rest s))))))))
+
+  (defn drop [^number_t n coll] "return runtime::nthrest(coll, n);")
+
+  (defn drop-while-aux [pred coll]
+    "var s = coll;
+
+     while (run(pred, s))
+       s = runtime::rest(s);
+
+     return s;")
+
+  (defn drop-while [pred coll]
+    (lazy-seq!
+      (fn []
+        (drop-while-aux (fn [s] (if (seqable? s) (pred (first s)) false)) coll))))
+
+  (defn concat1 [x]
+    (if (seqable? x)
+      (cons (first x) (lazy-seq! (fn [] (concat1 (rest x)))))))
+
+  (defn concat [x y]
+    (if (seqable? x)
+      (cons (first x) (lazy-seq! (fn [] (concat (rest x) y))))
+      (concat1 y)))
+
+  (defn filter [pred coll]
+    (lazy-seq!
+      (fn []
+        (if (seqable? coll)
+          (let [[f & r] coll]
+            (if (pred f)
+              (cons f (filter pred r))
+              (filter pred r)))))))
+
+  (defn partition [n coll]
+    (lazy-seq!
+      (fn []
+        (if (seqable? coll)
+          (let [p (take n coll)]
+            (if (= n (count p))
+              (cons p (partition n (nthrest coll n)))))))))
+
+  (defn every? [pred coll]
+    "for_each(i, coll) {
+       if (!run(pred, i))
+         return cached::false_o;
+     }
+     return cached::true_o;")
+
+  (defn interleave [s1 s2]
+    (lazy-seq!
+      (fn []
+        (if (seqable? s1)
+          (if (seqable? s2)
+            (cons (first s1) (cons (first s2) (interleave (rest s1) (rest s2)))))))))
+
+  (defn flatten [s]
+    (lazy-seq!
+      (fn []
+        (if (seqable? s)
+          (if (seqable? (first s))
+            (concat (flatten (first s)) (flatten (rest s)))
+            (cons (first s) (flatten (rest s))))))))
+
+  (defn string? [s] "return s.is_type(type_id<string>) ? cached::true_o : cached::false_o;")
+))
+
+(defn escape-string [s] (escape s (hash-map \" "\\\"", \\ "\\\\")))
 
 (defn form?
   ([s] (fn [f] (form? s f)))
@@ -50,16 +294,16 @@
 (defn fn-arg-symbol? [s] (and (symbol? s) (not (= s '&)) (not (= s '_))))
 
 (defn transform [tree pred f]
-  (walk/prewalk (fn [form]
-                  (if (pred form)
-                    (let [new-form (f form)
-                          meta (meta form)]
-                      (if (and (instance? clojure.lang.IMeta form)
-                               (instance? clojure.lang.IMeta new-form))
-                        (with-meta new-form meta)
-                        new-form))
-                    form))
-                tree))
+  (prewalk (fn [form]
+             (if (pred form)
+               (let [new-form (f form)
+                     meta (meta form)]
+                 (if (and (instance? clojure.lang.IMeta form)
+                          (instance? clojure.lang.IMeta new-form))
+                   (with-meta new-form meta)
+                   new-form))
+               form))
+           tree))
 
 (defn parser-peek [tree pred & [node-fn]]
   (let [node-fn (or node-fn zip/node)]
@@ -73,25 +317,18 @@
            (conj nodes (node-fn loc))
            nodes))))))
 
-(defn append-to! [r ks v]
-  (let [cv (reduce (fn [h v] (v h)) (deref r) ks)]
-    (swap! r assoc-in ks (conj cv v))
-    ""))
-
-(defn read-ermine [f] (read-string (str "(" (read-file f) ")")))
-
 (defn escape-fn-calls [form]
   (transform form
-    (fn [f] (and (seq? f) (form? 'fir-fn-heap (first f))))
-    (fn [[[_ & fun] & args]] (cons (cons 'fir-fn-stack fun) args))))
+    (fn [f] (and (seq? f) (form? 'ast-fn-heap (first f))))
+    (fn [[[_ & fun] & args]] (cons (cons 'ast-fn-stack fun) args))))
 
 (defn escape-fn-inheritance [form]
-  (let [heap-fns (into (hash-set) (map second (parser-peek form (form? 'fir-fn-heap))))
-        stack-fns (into (hash-set) (map second (parser-peek form (form? 'fir-fn-stack))))
-        escapeable-fns (set/difference stack-fns heap-fns)]
+  (let [heap-fns (into (hash-set) (map second (parser-peek form (form? 'ast-fn-heap))))
+        stack-fns (into (hash-set) (map second (parser-peek form (form? 'ast-fn-stack))))
+        escapeable-fns (difference stack-fns heap-fns)]
     (transform form
-        (fn [f] (and (seq? f) (= (first f) 'fir-defn-heap) (escapeable-fns (second f))))
-        (fn [[_ & fun]] (cons 'fir-defn-stack fun)))))
+        (fn [f] (and (seq? f) (= (first f) 'ast-defn-heap) (escapeable-fns (second f))))
+        (fn [[_ & fun]] (cons 'ast-defn-stack fun)))))
 
 (defn let-closure [bindings body]
   (if (empty? bindings)
@@ -103,10 +340,10 @@
 
 (defn fn-made-unique [args body]
   (if (string? (first body))
-    (apply list 'fir-lambda args body)
+    (apply list 'ast-lambda args body)
     (let [syms (filter fn-arg-symbol? (flatten args))
           uniq (apply hash-map (interleave syms (map (fn [%] (symbol (str % (gensym "__")))) syms)))]
-      (apply list 'fir-lambda (transform args uniq uniq) (transform body uniq uniq)))))
+      (apply list 'ast-lambda (transform args uniq uniq) (transform body uniq uniq)))))
 
 (defn expand-macros [form]
   (let [form (transform form (form? 'defn) (fn [[_ name args & body]] (list 'def name (apply list 'fn args body))))
@@ -117,37 +354,37 @@
 (defn fn-defined? [fns env args body]
   (let [name ((deref fns) (concat [env args] body))]
     (if name
-      (apply list 'fir-fn-heap name env))))
+      (apply list 'ast-fn-heap name env))))
 
 (defn define-fn [fns env name args body]
   (let [name (or name (gensym "FN__"))]
     (swap! fns assoc (concat [env args] body) name)
-    (apply list 'fir-fn-heap name env)))
+    (apply list 'ast-fn-heap name env)))
 
 (defn fn->lift
   ([form]
-   (let [fns  (atom (ordered-map/ordered-map))
+   (let [fns  (atom (ordered-map))
          form (fn->lift form fns)
-         fns  (map (fn [[body name]] (concat ['fir-defn-heap name] body)) (deref fns))]
+         fns  (map (fn [[body name]] (concat ['ast-defn-heap name] body)) (deref fns))]
      (concat fns form)))
   ([form fns & [env]]
-   (transform form (form? 'fir-lambda)
+   (transform form (form? 'ast-lambda)
     (fn [sig]
       (let [[name args body] (split-fn sig)
             ;; transform named recursion in body
             body (if name
-                   (transform body (form? name) (fn [[_ & args]] (cons (apply list 'fir-fn-heap name env) args)))
+                   (transform body (form? name) (fn [[_ & args]] (cons (apply list 'ast-fn-heap name env) args)))
                    body)
             body (fn->lift body fns (concat args env))
             symbols (symbol-set body)
-            env  (into (list) (set/intersection symbols (into (hash-set) (flatten env))))
+            env  (into (list) (intersection symbols (into (hash-set) (flatten env))))
             args (if (ffi-fn? body)
                    args
                    (transform args symbol? (fn [v] (if (or (not (fn-arg-symbol? v)) (symbols v)) v '_))))]
         (or (fn-defined? fns env args body) (define-fn fns env name args body)))))))
 
 (defn escape-cpp-symbol [s]
-  (clojure.string/escape (str s) (hash-map \- "_", \* "_star_", \+ "_plus_", \/ "_slash_", \< "_lt_", \> "_gt_", \= "_eq_", \? "_QMARK_", \! "_BANG_", \# "_")))
+  (escape (str s) (hash-map \- "_", \* "_star_", \+ "_plus_", \/ "_slash_", \< "_lt_", \> "_gt_", \= "_eq_", \? "_QMARK_", \! "_BANG_", \# "_")))
 
 (defn symbol-conversion [form]
   (transform form symbol? (comp (fn [%] (symbol (escape-cpp-symbol %))) (fn [%] (if (= 'not %) '_not_ %)))))
@@ -155,30 +392,27 @@
 (defn escape-analysis [form] (escape-fn-inheritance (escape-fn-calls form)))
 
 (defn compile [form]
-  (symbol-conversion (escape-analysis (fn->lift (expand-macros (concat (read-ermine "ermine/lang.clj") form))))))
+  (symbol-conversion (escape-analysis (fn->lift (expand-macros (concat ermine-runtime form))))))
 
 (declare emit)
 
-(defn emit-ast [ast state]
-  (reduce (fn [h v] (conj h (emit v state))) (vector) ast))
+(defn emit-ast [form model] (into (vector) (map (fn [f] (emit f model)) form)))
 
-(defn emit-source [form]
-  (let [state (atom (hash-map :symbols (hash-set), :lambdas (vector)))
-        ast (compile form)
-        body (emit-ast ast state)]
-    (assoc (deref state) :body body)))
+(defn program-model [form]
+  (let [model (atom (hash-map :symbols (hash-set), :lambdas (vector))), program (emit-ast (compile form) model)]
+    (assoc (deref model) :program program)))
 
-(defn emit--def [[_ name & form] state]
-  (append-to! state [:symbols] name)
-  (str "(" name " = " (apply str (emit-ast form state)) ")"))
+(defn emit--def [[_ name & form] model]
+  (swap! model update :symbols conj name)
+  (apply str name " = " (emit-ast form model)))
 
-(defn emit--if [[_ test then else] state]
-  (let [test (emit test state)
-        then (emit then state)
-        else (if (nil? else) "nil()" (emit else state))]
+(defn emit--if [[_ test then else] model]
+  (let [test (emit test model)
+        then (emit then model)
+        else (if (nil? else) "nil()" (emit else model))]
     (apply str "(" test " ? " then " : " else ")")))
 
-(defn emit--list [[_ & args] state] (str "runtime::list(" (apply str (interpose ", " (emit-ast args state))) ")"))
+(defn emit--list [[_ & args] model] (str "runtime::list(" (apply str (interpose ", " (emit-ast args model))) ")"))
 
 (defn norm-fn-env [env] (remove (fn [%] (or (= % '&) (= % '_))) (flatten env)))
 
@@ -233,68 +467,38 @@
          args         (destructure-sequential args-indexed parent)]
      (vector args var-args (vector)))))
 
-(defn emit-lambda [name env args body state]
+(defn emit-lambda [name env args body model]
   (let [body (if (empty? body)
                ["return nil()"]
                (if (ffi-fn? body)
                  (let [body (apply str body)]
                    (if (.contains body "return") [body] [body "return nil()"]))
-                 (let [body (emit-ast body state)]
+                 (let [body (emit-ast body model)]
                    (conj (pop body) (str "return " (last body))))))
         env  (norm-fn-env env)
         vars (destructure-arguments args)]
     (hash-map :name name :env env :args args :vars vars :body body)))
 
-(defn emit--defn-heap [[_ name env args & body] state] (append-to! state [:lambdas] (emit-lambda name env args body state)))
-(defn emit--defn-stack [[_ name env args & body] state] (append-to! state [:lambdas] (assoc (emit-lambda name env args body state) :stack true)))
+(defn emit--defn-heap [[_ name env args & body] model] (swap! model update :lambdas conj (emit-lambda name env args body model)) "")
+(defn emit--defn-stack [[_ name env args & body] model] (swap! model update :lambdas conj (assoc (emit-lambda name env args body model) :stack true)) "")
 
-(defn emit [f state]
-  (if (form? 'fir_defn_heap f)  (emit--defn-heap f state)
-    (if (form? 'fir_defn_stack f) (emit--defn-stack f state)
-      (if (form? 'fir_fn_heap f)    (new-fn-heap f)
-        (if (form? 'fir_fn_stack f)   (new-fn-stack f)
-          (if (form? 'list f)           (emit--list f state)
-            (if (form? 'if f)             (emit--if f state)
-              (if (form? 'def f)            (emit--def f state)
+(defn emit [f m]
+  (if (form? 'ast_defn_heap f)  (emit--defn-heap f m)
+    (if (form? 'ast_defn_stack f) (emit--defn-stack f m)
+      (if (form? 'ast_fn_heap f)    (new-fn-heap f)
+        (if (form? 'ast_fn_stack f)   (new-fn-stack f)
+          (if (form? 'list f)           (emit--list f m)
+            (if (form? 'if f)             (emit--if f m)
+              (if (form? 'def f)            (emit--def f m)
                 (if (symbol? f)               (str f)
                   (if (number? f)               (str "obj<number>(" (double f) ")")
                     (if (nil? f)                  "nil()"
                       (if (string? f)               (str "obj<string>(\"" (escape-string f) "\", " (count f) ")")
                         (if (or (true? f) (false? f)) (if (true? f) "cached::true_o" "cached::false_o")
-                          (if (seq? f)                  (let [[fun & args] f] (invoke-fn (emit fun state) (emit-ast args state)))
+                          (if (seq? f)                  (let [[fun & args] f] (invoke-fn (emit fun m) (emit-ast args m)))
                                                           (throw (Error. (str "unsupported form => " f)))))))))))))))))
 
-(defn lambda-definitions [fns]
-  (render-template
-   "$fns: {fn|
-      $if(!fn.stack)$
-       struct $fn.name$ final : lambda_i {
-      $else$
-       struct $fn.name$ \\{
-      $endif$
-        $fn.env:{const var $it$;} ;separator=\"\n\"$
-
-        $if(fn.env)$
-          explicit $fn.name$ ($fn.env:{ref $it$} ;separator=\",\"$) : $fn.env:{$it$($it$)} ;separator=\",\"$ { }
-        $endif$
-
-        var invoke (ref _args_) const $if(!fn.stack)$ final $endif$ ;
-      };};separator=\"\n\n\"$"
-   "fns" fns))
-
-(defn lambda-implementations [fns]
-  (render-template
-   "$fns: {fn|
-      inline var $fn.name$::invoke (ref _args_) const {
-        (void)(_args_);
-        $fn.vars:{$it$;} ;separator=\"\n\"$
-
-        $fn.body:{$it$;} ;separator=\"\n\"$
-      }
-     };separator=\"\n\n\"$"
-   "fns" fns))
-
-(defn program-template [source]
+(defn source-string [source]
   (str
 "
 #define ERMINE_CONFIG_SAFE_MODE TRUE
@@ -1529,8 +1733,8 @@ namespace ermine {
       return val_at(args);
     }
 
-    var vals () const { return runtime::rest(data); }
-    var keys () const { return runtime::first(data); }
+    var vals() const { return runtime::rest(data); }
+    var keys() const { return runtime::first(data); }
 
     virtual seekable_i* cast_seekable_i() { return this; }
 
@@ -1689,7 +1893,7 @@ namespace _main {
   using namespace ermine;
 
 "
-    (apply str (map (fn [%] (str "var " % ";\n")) (:symbols source)))
+    (apply str (interpose "\n" (map (fn [%] (str "  var " % ";")) (:symbols source))))
 "
 }
 
@@ -1817,13 +2021,39 @@ namespace ermine {
 
 namespace _main {
 "
-    (lambda-definitions (:lambdas source))
-    (lambda-implementations (:lambdas source))
+    (apply str (map (fn [f] (str
+"
+  struct " (:name f) " " (if (not (:stack f)) "final : lambda_i") " {
+"
+      (if (seq (:env f)) (str
+        (apply str (interpose "\n" (map (fn [%] (str "    const var " % ";")) (:env f))))
+"
+    explicit " (:name f) " (" (apply str (interpose ", " (map (fn [%] (str "ref " %)) (:env f)))) ") : "
+                              (apply str (interpose ", " (map (fn [%] (str % "(" % ")")) (:env f)))) " { }
+"
+      ))
+"
+    var invoke (ref _args_) const " (if (not (:stack f)) "final") ";
+  };
+"
+      )) (:lambdas source)))
+
+    (apply str (map (fn [f] (str
+"
+  inline var " (:name f) "::invoke (ref _args_) const {
+    (void)(_args_);
+"
+      (apply str (interpose "\n" (map (fn [%] (str "    " % ";")) (:vars f))))
+      (apply str (interpose "\n" (map (fn [%] (str "    " % ";")) (:body f))))
+"
+  }
+"
+      )) (:lambdas source)))
 "
 
   void main() {
 "
-    (apply str (map (fn [%] (str % ";\n")) (remove empty? (:body source))))
+    (apply str (interpose "\n" (map (fn [%] (str "    " % ";")) (remove empty? (:program source)))))
 "
   }
 }
@@ -1839,4 +2069,4 @@ int main() {
 "))
 
 (defn -main [& args]
-    (write-file "./main.cpp" (program-template (emit-source (read-ermine "./main.clj")))))
+    (print (source-string (program-model (read-string (str "(" (apply str (interleave (take-while some? (repeatedly read-line)) (repeat "\n"))) ")"))))))
