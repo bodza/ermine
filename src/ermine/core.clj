@@ -1,5 +1,5 @@
 (ns ermine.core
-  (:refer-clojure :only [= and apply assoc atom coll? comp concat conj cons count declare defn deref double drop drop-while empty? every? false? filter first flatten fn gensym hash-map hash-set instance? interleave interpose into last let letfn list loop map map-indexed meta nil? not number? odd? or partition pop print read-line read-string reduce remove repeat repeatedly rest second seq seq? some? str string? swap! symbol symbol? take-while true? update vector with-meta  *ns* *print-length* .. intern]) (:require [clojure.core :as -])
+  (:refer-clojure :only [= and apply assoc atom coll? comp concat conj cons count declare defn deref drop drop-while empty? every? false? filter first flatten fn gensym hash-map hash-set instance? int interleave interpose into last let letfn list loop map map-indexed meta nil? not number? odd? or partition pop print read-line read-string reduce remove repeat repeatedly rest second seq seq? some? str string? swap! symbol symbol? take-while true? update vector with-meta  *ns* *print-length* .. intern]) (:require [clojure.core :as -])
   (:require [clojure.set :refer [difference intersection]]
             [clojure.string :refer [escape]]
             [clojure.walk :refer [prewalk]]
@@ -35,10 +35,8 @@
   (defn first [s] "return runtime::first(s);")
   (defn rest [s] "return runtime::rest(s);")
 
-  (defn second [s] (first (rest s)))
-
-  (defn nth [s ^number_t n] "return runtime::nth(s, n);")
-  (defn nthrest [s ^number_t n] "return runtime::nthrest(s, n);")
+  (defn nth [s ^int n] "return runtime::nth(s, n);")
+  (defn nthrest [s ^int n] "return runtime::nthrest(s, n);")
 
   (defn reduce [f r s]
      "var q = r;
@@ -51,8 +49,6 @@
   (defn apply [f & s] "return runtime::apply(f, s);")
 
   (defn conj [coll & s] (reduce (fn [h v] (cons v h)) (if (nil? coll) (list) coll) s))
-
-  (defn reverse [s] (reduce (fn [h v] (cons v h)) (list) s))
 
   (defn true? [x] "return (x) ? cached::true_o : cached::false_o;")
   (defn false? [x] "return (!x) ? cached::true_o : cached::false_o;")
@@ -78,7 +74,7 @@
     "var a = runtime::first(args);
 
      for_each(b, runtime::rest(args)) {
-       if (number::to<real_t>(a) >= number::to<real_t>(b))
+       if (number::to<int>(a) >= number::to<int>(b))
          return cached::false_o;
        a = b;
      }
@@ -89,7 +85,7 @@
     "var a = runtime::first(args);
 
      for_each(b, runtime::rest(args)) {
-       if (number::to<real_t>(a) <= number::to<real_t>(b))
+       if (number::to<int>(a) <= number::to<int>(b))
          return cached::false_o;
        a = b;
      }
@@ -100,7 +96,7 @@
     "var a = runtime::first(args);
 
      for_each(b, runtime::rest(args)) {
-       if (number::to<real_t>(a) < number::to<real_t>(b))
+       if (number::to<int>(a) < number::to<int>(b))
          return cached::false_o;
        a = b;
      }
@@ -111,7 +107,7 @@
     "var a = runtime::first(args);
 
      for_each(b, runtime::rest(args)) {
-       if (number::to<real_t>(a) > number::to<real_t>(b))
+       if (number::to<int>(a) > number::to<int>(b))
          return cached::false_o;
        a = b;
      }
@@ -125,65 +121,48 @@
   (defn neg? [x] (< x 0))
 
   (defn + [& args]
-    "real_t value(0.0);
+    "int value(0);
 
      for_each(i, args)
-       value = value + number::to<real_t>(i);
+       value = value + number::to<int>(i);
 
      return obj<number>(value);")
 
   (defn - [& args]
     "var a = runtime::first(args);
 
-     real_t value = number::to<real_t>(a);
+     int value = number::to<int>(a);
      size_t count = 1;
 
      for_each(i, runtime::rest(args)) {
-       value = (value - number::to<real_t>(i));
+       value = (value - number::to<int>(i));
        count++;
      }
 
      if (count == 1)
-       value = value * real_t(-1.0);
+       value = value * int(-1);
 
      return obj<number>(value);")
 
   (defn * [& args]
-    "real_t value(1.0);
+    "int value(1);
 
      for_each(i, args)
-       value = (value * number::to<real_t>(i));
+       value = (value * number::to<int>(i));
 
      return obj<number>(value);")
 
   (defn inc [x] (+ x 1))
   (defn dec [x] (- x 1))
 
-  (defn min [& args]
-    "var m = runtime::first(args);
+  (defn bit-and [^int x ^int y] "return obj<number>((x & y));")
+  (defn bit-or [^int x ^int y] "return obj<number>((x | y));")
+  (defn bit-xor [^int x ^int y] "return obj<number>((x ^ y));")
 
-     for_each(i, runtime::rest(args))
-       if (number::to<real_t>(m) > number::to<real_t>(i))
-         m = i;
+  (defn bit-not [^int x] "return obj<number>(~x);")
 
-     return m;")
-
-  (defn max [& args]
-    "var m = runtime::first(args);
-
-     for_each(i, runtime::rest(args))
-       if (number::to<real_t>(m) < number::to<real_t>(i))
-         m = i;
-
-     return m;")
-
-  (defn bit-and [^number_t x ^number_t y] "return obj<number>((x & y));")
-  (defn bit-not [^number_t x] "return obj<number>(~x);")
-  (defn bit-or [^number_t x ^number_t y] "return obj<number>((x | y));")
-  (defn bit-xor [^number_t x ^number_t y] "return obj<number>((x ^ y));")
-
-  (defn bit-shift-left [^number_t x ^number_t n] "return obj<number>((x << n));")
-  (defn bit-shift-right [^number_t x ^number_t n] "return obj<number>((x >> n));")
+  (defn bit-shift-left [^int x ^int n] "return obj<number>((x << n));")
+  (defn bit-shift-right [^int x ^int n] "return obj<number>((x >> n));")
 
   (defn identity [x] x)
 
@@ -193,7 +172,7 @@
         (if (seqable? coll)
           (cons (f (first coll)) (map f (rest coll)))))))
 
-  (defn range [^number_t n] "return runtime::range(0, n)")
+  (defn range [^int n] "return runtime::range(0, n)")
 
   (defn take [n coll]
     (lazy-seq!
@@ -209,7 +188,7 @@
           (if (pred (first s))
             (cons (first s) (take-while pred (rest s))))))))
 
-  (defn drop [^number_t n coll] "return runtime::nthrest(coll, n);")
+  (defn drop [^int n coll] "return runtime::nthrest(coll, n);")
 
   (defn drop-while-aux [pred coll]
     "var s = coll;
@@ -432,7 +411,7 @@
 (defn new-fn-arg [name parent i]
   (let [value (destructure-nth parent i)]
     (if (= (:tag (meta name)) 'number_t)
-      (str "number_t " name " = number::to<number_t>(" value ")")
+      (str "int " name " = number::to<int>(" value ")")
       (str "ref " name " = " value))))
 
 (defn new-fn-var-arg [name parent i]
@@ -491,7 +470,7 @@
             (if (form? 'if f)             (emit--if f m)
               (if (form? 'def f)            (emit--def f m)
                 (if (symbol? f)               (str f)
-                  (if (number? f)               (str "obj<number>(" (double f) ")")
+                  (if (number? f)               (str "obj<number>(" (int f) ")")
                     (if (nil? f)                  "nil()"
                       (if (string? f)               (str "obj<string>(\"" (escape-string f) "\", " (count f) ")")
                         (if (or (true? f) (false? f)) (if (true? f) "cached::true_o" "cached::false_o")
@@ -501,284 +480,29 @@
 (defn source-string [source]
   (str
 "
-#define ERMINE_CONFIG_SAFE_MODE TRUE
-
-#if defined(__APPLE__) || defined(_WIN32) || defined(__linux__) || defined(__unix__) || defined(_POSIX_VERSION)
-  #undef ERMINE_CONFIG_SAFE_MODE
-  #define ERMINE_STD_LIB TRUE
-#endif
-
-#if defined(ERMINE_CONFIG_SAFE_MODE)
-  #define ERMINE_DISABLE_MULTI_THREADING TRUE
-#endif
-
-#ifdef ERMINE_STD_LIB
-  #include <iostream>
-  #include <iomanip>
-  #include <sstream>
-  #include <cstdio>
-  #include <cstdlib>
-  #include <cstddef>
-  #include <cmath>
-  #include <vector>
-  #include <algorithm>
-  #include <chrono>
-  #include <atomic>
-  #include <mutex>
-  #include <thread>
-  #include <future>
-#endif
-
-#ifdef ERMINE_CONFIG_SAFE_MODE
-  #include <stdio.h>
-  #include <stdlib.h>
-  #include <stdint.h>
-  #include <math.h>
-#endif
+#include <cstdio>
+#include <atomic>
+#include <mutex>
 
 namespace ermine {
-  namespace runtime { }
-
   // Types
   typedef uint8_t byte;
 
   // Concurrency
-  #if defined(ERMINE_DISABLE_MULTI_THREADING)
-    struct mutex {
-      void lock()   { }
-      void unlock() { }
-    };
-  #else
-    #if defined(ERMINE_STD_LIB)
-      struct mutex {
-        ::std::mutex m;
+  struct mutex {
+    ::std::mutex m;
 
-        void lock()   { m.lock();   }
-        void unlock() { m.unlock(); }
-      };
-    #endif
-  #endif
+    void lock()   { m.lock();   }
+    void unlock() { m.unlock(); }
+  };
 
   struct lock_guard {
     mutex & _ref;
 
     explicit lock_guard(const lock_guard &) = delete;
-    explicit lock_guard(mutex & mutex) : _ref(mutex) { _ref.lock(); };
+    explicit lock_guard(mutex & m) : _ref(m) { _ref.lock(); };
     ~lock_guard() { _ref.unlock(); }
   };
-
-  // Containers
-  #undef bit
-
-  #if !defined(ERMINE_BITSET_WORD_TYPE)
-    #define ERMINE_BITSET_WORD_TYPE unsigned int
-    #if defined(__clang__) || defined(__GNUG__)
-      #define ERMINE_BITSET_USE_COMPILER_INTRINSICS true
-    #endif
-  #endif
-
-  template <size_t S, typename word_t = ERMINE_BITSET_WORD_TYPE>
-  struct bitset {
-    static const size_t bits_per_word = sizeof(word_t) * 8;
-    static const size_t n_words = S / bits_per_word;
-
-    static_assert((S % bits_per_word) == 0, \"bitset size must be a multiple of word_t\");
-
-    word_t bits[n_words];
-
-    inline size_t word (size_t i) const { return i / bits_per_word; }
-    inline size_t bit  (size_t i) const { return i % bits_per_word; }
-
-    bitset() : bits{ word_t(0x00) } { }
-
-    inline void set (size_t b) {
-      bits[word(b)] = (word_t)(bits[word(b)] | (word_t(1) << (bit(b))));
-    }
-
-    inline void set (size_t b, size_t e) {
-      size_t word_ptr = word(b);
-      size_t n_bits = e - b;
-
-      bits[word_ptr] = (word_t)(bits[word_ptr] | bit_block(bit(b), n_bits));
-
-      n_bits -= bits_per_word - bit(b);
-      word_ptr++;
-      size_t last_word = (word(e) == n_words) ? n_words : word(e) + 1;
-      for ( ; word_ptr < last_word; word_ptr++) {
-        bits[word_ptr] = (word_t)(bits[word_ptr] | bit_block(0, n_bits));
-        n_bits -= bits_per_word;
-      }
-    }
-
-    inline void reset (size_t b) {
-      bits[word(b)] = (word_t)(bits[word(b)] & ~(word_t(1) << (bit(b))));
-    }
-
-    inline void reset (size_t b, size_t e) {
-      size_t word_ptr = word(b);
-      size_t n_bits = e - b;
-
-      bits[word_ptr] = (word_t)(bits[word_ptr] & ~bit_block(bit(b), n_bits));
-
-      n_bits -= bits_per_word - bit(b);
-      word_ptr++;
-      size_t last_word = (word(e) == n_words) ? n_words : word(e) + 1;
-      for ( ; word_ptr < last_word; word_ptr++) {
-        bits[word_ptr] = (word_t)(bits[word_ptr] & ~bit_block(0, n_bits));
-        n_bits -= bits_per_word;
-      }
-    }
-
-    inline void flip (size_t b) {
-      bits[word(b)] = (word_t)(bits[word(b)] ^ (word_t(1) << (bit(b))));
-    }
-
-    inline void flip (size_t b, size_t e) {
-      size_t word_ptr = word(b);
-      size_t n_bits = e - b;
-
-      bits[word_ptr] = (word_t)(bits[word_ptr] ^ bit_block(bit(b), n_bits));
-
-      n_bits -= bits_per_word - bit(b);
-      word_ptr++;
-      size_t last_word = (word(e) == n_words) ? n_words : word(e) + 1;
-      for ( ; word_ptr < last_word; word_ptr++) {
-        bits[word_ptr] = (word_t)(bits[word_ptr] ^ bit_block(0, n_bits));
-        n_bits -= bits_per_word;
-      }
-    }
-
-    inline bool test (size_t b) const {
-      return (bits[word(b)] & (word_t(1) << (bit(b))));
-    }
-
-    inline size_t ffs(size_t b = 0, size_t e = S) const {
-  #if defined(ERMINE_BITSET_USE_COMPILER_INTRINSICS)
-        // search first word
-        size_t word_ptr = word(b);
-        word_t this_word = bits[word_ptr];
-
-        // mask off bits below bound
-        this_word &= (~static_cast<word_t>(0)) << bit(b);
-
-        if (this_word != static_cast<word_t>(0))
-  	return ((word_ptr * bits_per_word) + (size_t) __builtin_ctz(this_word));
-
-        // check subsequent words
-        word_ptr++;
-        size_t last_word = (word(e) == n_words) ? n_words : word(e) + 1;
-        for ( ; word_ptr < last_word; word_ptr++) {
-          this_word = bits[word_ptr];
-          if (this_word != static_cast<word_t>(0))
-            return ((word_ptr * bits_per_word) + (size_t) __builtin_ctz(this_word));
-        }
-  #else
-        for (size_t i = b; i < e; i++)
-          if (test(i))
-            return i;
-  #endif
-      return S;
-    }
-
-    inline size_t ffr(size_t b = 0, size_t e = S) const {
-  #if defined(ERMINE_BITSET_USE_COMPILER_INTRINSICS)
-        // same as ffs but complements word before counting
-        size_t word_ptr = word(b);
-        word_t this_word = ~bits[word_ptr];
-
-        this_word &= (~static_cast<word_t>(0)) << bit(b);
-
-        if (this_word != static_cast<word_t>(0))
-  	return ((word_ptr * bits_per_word) + (size_t) __builtin_ctz(this_word));
-
-        word_ptr++;
-        size_t last_word = (word(e) == n_words) ? n_words : word(e) + 1;
-        for ( ; word_ptr < last_word; word_ptr++) {
-          this_word = ~bits[word_ptr];
-          if (this_word != static_cast<word_t>(0))
-            return ((word_ptr * bits_per_word) + (size_t) __builtin_ctz(this_word));
-        }
-  #else
-        for (size_t i = b; i < e; i++)
-          if (!test(i))
-            return i;
-  #endif
-      return S;
-    }
-
-    // Return word with length-n bit block starting at bit p set.
-    // Both p and n are effectively taken modulo bits_per_word.
-    static inline word_t bit_block(size_t p, size_t n) {
-      if (n >= bits_per_word)
-        return (word_t)(word_t(-1) << p);
-
-      word_t x = (word_t)((word_t(1) << n) - word_t(1));
-      return (word_t)(x << p);
-    }
-
-  #if defined(ERMINE_STD_LIB)
-    friend std::ostream& operator<< (std::ostream& stream, bitset& x) {
-      for (size_t i = 0; i < S; i++)
-        stream << x.test(i);
-      return stream;
-    }
-  #endif
-  };
-}
-
-// Math
-namespace ermine {
-  #if !defined(ERMINE_NUMBER_TYPE)
-     #define ERMINE_NUMBER_TYPE int
-  #endif
-
-  #if !defined(ERMINE_REAL_TYPE)
-     #define ERMINE_REAL_TYPE double
-  #endif
-
-  #if !defined(ERMINE_REAL_EPSILON)
-     #define ERMINE_REAL_EPSILON 0.0001
-  #endif
-
-    int req_real_precision(double t) {
-      return ((-1 * (int)log10(t)));
-    }
-
-    typedef ERMINE_NUMBER_TYPE number_t;                   // Whole number Container.
-    typedef ERMINE_REAL_TYPE   real_t;                     // Real number Container.
-    const   real_t             real_epsilon(ERMINE_REAL_EPSILON);
-    const   int                real_precision = req_real_precision(ERMINE_REAL_EPSILON);
-
-  namespace runtime {
-    #undef min
-    #undef max
-    #undef abs
-
-    template <typename T>
-    static constexpr T max(T a, T b) {
-      return a < b ? b : a;
-    }
-
-    template <typename T, typename... Ts>
-    static constexpr T max(T a, Ts... bs) {
-      return max(a, max(bs...));
-    }
-
-    template <typename T>
-    constexpr T min(T a, T b) {
-      return ((a) < (b) ? (a) : (b));
-    }
-
-    template <typename T, typename... Ts>
-    static constexpr T min(T a, Ts... bs) {
-      return min(a, min(bs...));
-    }
-
-    template <typename T>
-    constexpr T abs(T a) {
-      return ((a) < (T)0 ? -(a) : (a));
-    }
-  }
 }
 
 // Object System Base
@@ -799,239 +523,31 @@ namespace ermine {
       inline T *operator->() const { return ptr; }
     };
 
-    inline size_t align_of(uintptr_t size, size_t align) {
-      return (size + align - 1) & ~(align - 1);
+    static mutex lock;
+
+    static inline void* allocate(size_t s) {
+      lock_guard _(lock);
+      return ::malloc(s);
     }
 
-    template <class T>
-    size_t align_of(const void* ptr) {
-      return align_of(reinterpret_cast<uintptr_t>(ptr), sizeof(T));
+    template <typename FT>
+    static inline void* allocate() { return allocate(sizeof(FT)); }
+
+    static inline void free(void* ptr) {
+      lock_guard _(lock);
+      ::free(ptr);
     }
 
-    inline size_t align_req(uintptr_t size, size_t align) {
-      size_t adjust = align - (size & (align - 1));
+    template <typename T>
+    struct rc {
+      T ref_count;
 
-      if (adjust == align)
-        return 0;
-      else
-        return adjust;
-    }
+      rc() : ref_count(0) { }
 
-    template <class T>
-    size_t align_req(const void* ptr) {
-      return align_req(reinterpret_cast<uintptr_t>(ptr), sizeof(T));
-    }
-
-    template <typename... Ts>
-    constexpr size_t max_sizeof() {
-      return runtime::max(sizeof(Ts)...);
-    }
+      inline void inc_ref() { ref_count++; }
+      inline bool dec_ref() { return (--ref_count == 0); }
+    };
   }
-
-  #ifdef ERMINE_MEMORY_POOL_SIZE
-  namespace memory {
-    namespace allocator {
-      template <typename page_t, size_t pool_size, typename bitset_word_t = ERMINE_BITSET_WORD_TYPE>
-      struct memory_pool {
-        bitset<pool_size, bitset_word_t> used;
-        page_t pool[pool_size];
-        size_t next_ptr;
-
-        memory_pool() : pool{0}, next_ptr(0) { }
-
-        inline size_t scan(size_t n_pages, size_t from_page = 0) const {
-          for (;;) {
-            size_t begin = used.ffr(from_page);
-            size_t end = begin + n_pages;
-
-            if (end > pool_size)
-              return pool_size;
-
-            if (used.ffs(begin, end) >= end)
-              return begin;
-
-            from_page = end;
-          }
-        }
-
-        void* allocate(size_t req_size) {
-          req_size = align_of(req_size, sizeof(page_t)) + sizeof(page_t);
-          size_t n_pages = req_size / sizeof(page_t);
-          size_t page = scan(n_pages, next_ptr);
-
-          if (page == pool_size) {
-            page = scan(n_pages);
-            if (page == pool_size)
-              return nullptr;
-          }
-
-          pool[page] = (page_t)n_pages;
-          next_ptr = page + n_pages;
-          used.flip(page, next_ptr);
-
-          return &pool[++page];
-        }
-
-        void free(void* p) {
-          ptrdiff_t begin = (static_cast<page_t *>(p) - pool) - 1;
-          ptrdiff_t end = begin + (ptrdiff_t)pool[begin];
-          used.flip((size_t)begin, (size_t)end);
-        }
-      };
-    }
-  }
-  #endif
-
-  #if defined(ERMINE_MEMORY_POOL_SIZE) && !defined(ERMINE_ALLOCATOR)
-
-   #define ERMINE_ALLOCATOR memory::allocator::pool
-
-   #if !defined(ERMINE_MEMORY_POOL_PAGE_TYPE)
-    #define ERMINE_MEMORY_POOL_PAGE_TYPE size_t
-   #endif
-
-  namespace memory {
-    namespace allocator {
-      memory_pool<ERMINE_MEMORY_POOL_PAGE_TYPE, ERMINE_MEMORY_POOL_SIZE> program_memory;
-
-      struct pool {
-        static void init() { }
-
-        static inline void* allocate(size_t s) {
-          return program_memory.allocate(s);
-        }
-
-        template <typename FT>
-        static inline void* allocate() { return allocate(sizeof(FT)); }
-
-        static inline void free(void* ptr) { program_memory.free(ptr); }
-      };
-    }
-  }
-  #endif
-
-  #ifdef ERMINE_MEMORY_BOEHM_GC
-
-  #define ERMINE_ALLOCATOR memory::allocator::gc
-  #define ERMINE_DISABLE_RC true
-
-  #include <gc.h>
-
-  namespace memory {
-    namespace allocator {
-
-      struct gc {
-        static void init() { GC_INIT(); }
-
-        static inline void* allocate(size_t s) {
-  #ifdef ERMINE_DISABLE_MULTI_THREADING
-          return GC_MALLOC(s);
-  #else
-          return GC_MALLOC_ATOMIC(s);
-  #endif
-        }
-
-        template <typename FT>
-        static inline void* allocate() { return allocate(sizeof(FT)); }
-
-        static inline void free(void* ptr) { }
-      };
-    }
-  }
-  #endif
-
-  #if !defined(ERMINE_ALLOCATOR)
-
-  #define ERMINE_ALLOCATOR memory::allocator::system
-
-  namespace memory {
-    namespace allocator {
-
-      struct system {
-        static void init() { }
-
-        static inline void* allocate(size_t s) { return ::malloc(s); }
-
-        template <typename FT>
-        static inline void* allocate() { return allocate(sizeof(FT)); }
-
-        static inline void free(void* ptr) { ::free(ptr); }
-      };
-    }
-  }
-  #endif
-
-  namespace memory {
-    namespace allocator {
-      struct synchronized {
-        static mutex lock;
-
-        static void init() { ERMINE_ALLOCATOR::init(); }
-
-        static inline void* allocate(size_t s) {
-          lock_guard guard(lock);
-          return ERMINE_ALLOCATOR::allocate(s);
-        }
-
-        template <typename FT>
-        static inline void* allocate() { return allocate(sizeof(FT)); }
-
-        static inline void free(void* ptr) {
-          lock_guard guard(lock);
-          ERMINE_ALLOCATOR::free(ptr);
-        }
-      };
-    }
-  }
-
-  #if !defined(ERMINE_DISABLE_MULTI_THREADING)
-
-    #if defined(ERMINE_MEMORY_POOL_SIZE)
-      mutex memory::allocator::synchronized::lock;
-      #undef ERMINE_ALLOCATOR
-      #define ERMINE_ALLOCATOR memory::allocator::synchronized
-    #endif
-
-  #endif
-
-  #if !defined(ERMINE_RC_POLICY)
-  namespace memory {
-    namespace gc {
-
-  #if !defined(ERMINE_RC_TYPE)
-    #define ERMINE_RC_TYPE unsigned int
-  #endif
-
-  #if defined(ERMINE_DISABLE_RC)
-
-  #define ERMINE_RC_POLICY memory::gc::no_rc
-      struct no_rc {
-
-        inline void inc_ref() { }
-        inline bool dec_ref() { return false; }
-      };
-  #else
-      template <typename T>
-      struct rc {
-        rc() : ref_count(0) { }
-
-        inline void inc_ref() { ref_count++; }
-        inline bool dec_ref() { return (--ref_count == 0); }
-
-        T ref_count;
-      };
-
-      #if defined(ERMINE_DISABLE_MULTI_THREADING) || !defined(ERMINE_STD_LIB)
-        #define ERMINE_RC_POLICY memory::gc::rc<ERMINE_RC_TYPE>
-      #endif
-
-      #if defined(ERMINE_STD_LIB) && !defined(ERMINE_DISABLE_MULTI_THREADING)
-        #define ERMINE_RC_POLICY memory::gc::rc<::std::atomic<ERMINE_RC_TYPE>>
-      #endif
-  #endif
-    }
-  }
-  #endif
 
   template <typename>
   void type_id() { }
@@ -1043,8 +559,8 @@ namespace ermine {
   typedef var const & ref;
   struct seekable_i;
 
-  template <typename rc>
-  struct object_i : rc {
+  template <typename RC>
+  struct object_i : RC {
     object_i() { }
     virtual ~object_i() { };
 
@@ -1055,16 +571,12 @@ namespace ermine {
     virtual seekable_i* cast_seekable_i() { return nullptr; }
 
     void* operator new(size_t, void* ptr) { return ptr; }
-    void  operator delete(void* ptr) { ERMINE_ALLOCATOR::free(ptr); }
+    void  operator delete(void* ptr) { memory::free(ptr); }
   };
 
-  typedef object_i<ERMINE_RC_POLICY> object;
+  typedef object_i<memory::rc<::std::atomic<unsigned int>>> object;
 
-  #if !defined(ERMINE_POINTER_T)
-    #define ERMINE_POINTER_T memory::pointer<object>
-  #endif
-
-  typedef ERMINE_POINTER_T pointer_t;
+  typedef memory::pointer<object> pointer_t;
 
   struct var {
     pointer_t obj;
@@ -1122,14 +634,11 @@ namespace ermine {
     }
 
     inline void inc_ref() {
-  #if !defined(ERMINE_DISABLE_RC)
       // Only change if non-null
       if (obj) obj->inc_ref();
-  #endif
     }
 
     inline void dec_ref() {
-  #if !defined(ERMINE_DISABLE_RC)
       // Only change if non-null
       if (obj) {
         // Subtract and test if this was the last pointer.
@@ -1138,43 +647,27 @@ namespace ermine {
           obj = nullptr;
         }
       }
-  #endif
     }
   };
 
   template <>
   inline seekable_i* var::cast<seekable_i>() const { return obj->cast_seekable_i(); }
 
-  template <typename rc>
-  bool object_i<rc>::equals(ref o) const {
+  template <typename RC>
+  bool object_i<RC>::equals(ref o) const {
     return (this == o.get());
   }
 
   template <typename FT, typename... Args>
   inline var obj(Args... args) {
-    void* storage = ERMINE_ALLOCATOR::allocate<FT>();
+    void* storage = memory::allocate<FT>();
+
     return var(new(storage) FT(args...));
   }
 
   inline var nil() {
     return var();
   }
-
-  #undef alloca
-
-  template <typename T>
-  struct alloca {
-    byte memory [sizeof(T)];
-
-    template <typename... Args>
-    inline explicit alloca(Args... args) {
-      (new(memory) T(args...))->inc_ref();
-    }
-
-    inline operator object*() {
-      return (object*)memory;
-    }
-  };
 }
 
 namespace ermine {
@@ -1185,25 +678,23 @@ namespace ermine {
     T* data {nullptr};
 
     explicit inline array(size_t s = 0) : _size(s) {
-      data = (T *)ERMINE_ALLOCATOR::allocate(_size * sizeof(T));
+      data = (T *)memory::allocate(_size * sizeof(T));
     }
 
     explicit inline array(const T* source, size_t s = 0) : _size(s) {
-      data = (T *)ERMINE_ALLOCATOR::allocate(_size * sizeof(T));
+      data = (T *)memory::allocate(_size * sizeof(T));
       for (size_t i = 0; i < _size; i++)
         data[i] = source[i];
     }
 
-  #if defined(ERMINE_STD_LIB)
     explicit inline array(std::initializer_list<T> source) : _size(source.size()) {
-      data = (T *)ERMINE_ALLOCATOR::allocate(_size * sizeof(T));
-      size_t idx = 0;
+      data = (T *)memory::allocate(_size * sizeof(T));
+      size_t i = 0;
       for (auto item : source) {
-        data[idx] = item;
-        idx++;
+        data[i] = item;
+        i++;
       }
     }
-  #endif
 
     inline array(array&& m) : data(m.data), _size(m.size()) { m.data = nullptr; }
 
@@ -1213,7 +704,7 @@ namespace ermine {
     }
 
     ~array() {
-      ERMINE_ALLOCATOR::free(data);
+      memory::free(data);
     }
 
 
@@ -1224,8 +715,8 @@ namespace ermine {
       return *this;
     }
 
-    inline T& operator [](size_t idx)      { return data[idx]; }
-    inline T operator [](size_t idx) const { return data[idx]; }
+    inline T& operator [](size_t i)      { return data[i]; }
+    inline T operator [](size_t i) const { return data[i]; }
 
     inline T*     begin() const { return &data[0];     }
     inline T*     end()   const { return &data[_size]; }
@@ -1246,12 +737,12 @@ namespace ermine {
       inline var rest(ref seq);
       inline var cons(ref x, ref seq);
 
-      var nth(var seq, number_t index);
-      var nthrest(var seq, number_t index);
+      var nth(var seq, int index);
+      var nthrest(var seq, int index);
 
       inline size_t count(ref seq);
 
-      inline var range(number_t low, number_t high);
+      inline var range(int low, int high);
     }
 
   #define for_each(x,xs) for (var _tail_ = runtime::rest(xs), x = runtime::first(xs); !_tail_.is_nil(); x = runtime::first(_tail_), _tail_ = runtime::rest(_tail_))
@@ -1373,12 +864,12 @@ namespace ermine {
   struct number final : object {
     type_t type() const final { return type_id<number>; }
 
-    const real_t n;
+    const int n;
 
-    template <typename T> explicit number(T x) : n(real_t(x)) { }
+    template <typename T> explicit number(T x) : n(int(x)) { }
 
     bool equals(ref o) const final {
-      return (runtime::abs(n - number::to<real_t>(o)) < real_epsilon);
+      return (n == number::to<int>(o));
     }
 
     template <typename T> static T to(ref v) {
@@ -1441,25 +932,6 @@ namespace ermine {
     }
   }
 
-  #ifdef ERMINE_STD_LIB
-  typedef ::std::vector<var> std_vector;
-
-  template <> std_vector sequence::to(ref v) {
-    std_vector ret;
-    for_each(i, v)
-      ret.push_back(i);
-    return ret;
-  }
-
-  template <> var sequence::from(std_vector v) {
-    var ret;
-    std::vector<var>::reverse_iterator rit;
-    for (rit = v.rbegin(); rit != v.rend(); rit++)
-      ret = runtime::cons(*rit, ret);
-    return ret;
-  }
-  #endif
-
   struct lazy_sequence final : object, seekable_i {
     type_t type() const final { return type_id<lazy_sequence>; }
 
@@ -1490,7 +962,7 @@ namespace ermine {
     }
 
     var cons(ref x) final {
-      lock_guard guard(lock);
+      lock_guard _(lock);
 
       if (data.is_nil())
         return obj<lazy_sequence>(x, thunk, cache);
@@ -1499,7 +971,7 @@ namespace ermine {
     }
 
     var first() final {
-      lock_guard guard(lock);
+      lock_guard _(lock);
 
       if (cache)
         yield();
@@ -1510,7 +982,7 @@ namespace ermine {
     }
 
     var rest() final {
-      lock_guard guard(lock);
+      lock_guard _(lock);
       var tail;
 
       if (cache) {
@@ -1572,7 +1044,7 @@ namespace ermine {
     size_t _size {0};
 
     var* allocate() {
-      var* storage = static_cast<var*>(ERMINE_ALLOCATOR::allocate(_size * sizeof(var))) ;
+      var* storage = static_cast<var*>(memory::allocate(_size * sizeof(var))) ;
       for (size_t i = 0; i < _size; i++)
         new (&storage[i]) var();
       return storage;
@@ -1592,7 +1064,7 @@ namespace ermine {
     ~array() {
       for (size_t i = 0; i < size(); i++)
         (&data[i])->~var();
-      ERMINE_ALLOCATOR::free(data);
+      memory::free(data);
     }
 
     inline array& operator= (array&& x) {
@@ -1602,8 +1074,8 @@ namespace ermine {
       return *this;
     }
 
-    inline var& operator[] (size_t idx)      { return data[idx]; }
-    inline var operator[] (size_t idx) const { return data[idx]; }
+    inline var& operator[] (size_t i)      { return data[i]; }
+    inline var operator[] (size_t i) const { return data[i]; }
 
     inline var*   begin() const { return &data[0];     }
     inline var*   end()   const { return &data[_size]; }
@@ -1762,14 +1234,12 @@ namespace ermine {
 
   template <>
   inline var obj<d_list>(var keys, var vals) {
-    void* storage = ERMINE_ALLOCATOR::allocate<d_list>();
+    void* storage = memory::allocate<d_list>();
 
     return var(new(storage) d_list(runtime::cons(keys, vals)));
   }
 
-  #if !defined(ERMINE_MAP_TYPE)
   typedef d_list map_t;
-  #endif
 
   struct string final : object, seekable_i {
     type_t type() const final { return type_id<string>; }
@@ -1798,7 +1268,7 @@ namespace ermine {
       from_char_pointer(str, length);
     }
 
-    explicit string(const char* str, number_t length) { from_char_pointer(str, length); }
+    explicit string(const char* str, int length) { from_char_pointer(str, length); }
 
     virtual seekable_i* cast_seekable_i() { return this; }
 
@@ -1848,18 +1318,18 @@ namespace ermine {
     template <typename T> static T to(ref) { T::unimplemented_function; }
   };
 
-  #ifdef ERMINE_STD_LIB
   template <>
   inline var obj<string>(std::string s) {
-    void* storage = ERMINE_ALLOCATOR::allocate<string>();
-    return var(new(storage) string(s.c_str(), (number_t)s.size()));
+    void* storage = memory::allocate<string>();
+
+    return var(new(storage) string(s.c_str(), (int)s.size()));
   }
 
-  template <> ::std::string string::to(ref str) {
+  template <>
+  ::std::string string::to(ref str) {
     var packed = string::pack(str);
     return std::string(string::c_str(packed));
   }
-  #endif
 
   struct atomic final : deref_i {
     type_t type() const final { return type_id<atomic>; }
@@ -1870,19 +1340,19 @@ namespace ermine {
     explicit atomic(ref d) : data(d) { }
 
     var swap(ref f, ref args) {
-      lock_guard guard(lock);
+      lock_guard _(lock);
       data = f.cast<lambda_i>()->invoke(runtime::cons(data, args));
       return data;
     }
 
     var reset(ref newval) {
-      lock_guard guard(lock);
+      lock_guard _(lock);
       data = newval;
       return data;
     }
 
     var deref() final {
-      lock_guard guard(lock);
+      lock_guard _(lock);
       return data;
     }
   };
@@ -1928,18 +1398,18 @@ namespace ermine {
         return seq.cast<seekable_i>()->cons(x);
     }
 
-    var nth(var seq, number_t index) {
+    var nth(var seq, int index) {
       if (index < 0)
         return nil();
 
-      for (number_t i = 0; i < index; i++)
+      for (int i = 0; i < index; i++)
         seq = runtime::rest(seq);
 
       return runtime::first(seq);
     }
 
-    var nthrest(var seq, number_t index) {
-      for (number_t i = 0; i < index; i++)
+    var nthrest(var seq, int index) {
+      for (int i = 0; i < index; i++)
         seq = runtime::rest(seq);
 
       if (seq.is_nil())
@@ -1957,11 +1427,11 @@ namespace ermine {
       return acc;
     }
 
-    inline var range(number_t low, number_t high) {
+    inline var range(int low, int high) {
       struct seq : lambda_i {
-        number_t low, high;
+        int low, high;
 
-        explicit seq(number_t l, number_t h) : low(l), high(h) { }
+        explicit seq(int l, int h) : low(l), high(h) { }
 
         var invoke(ref) const final {
           if (low < high)
@@ -2051,20 +1521,16 @@ namespace _main {
       )) (:lambdas source)))
 "
 
-  void main() {
+  int main() {
 "
     (apply str (interpose "\n" (map (fn [%] (str "    " % ";")) (remove empty? (:program source)))))
 "
+    return 0;
   }
 }
 
 int main() {
-  using namespace ermine;
-  ERMINE_ALLOCATOR::init();
-
-  _main::main();
-
-  return 0;
+  return _main::main();
 }
 "))
 
