@@ -1,6 +1,5 @@
 (defproject ermine "x.y.z"
     :dependencies [[org.clojure/clojure "1.10.0"]
-                   [fast-zip "0.7.0"]
                    [org.flatland/ordered "1.5.7"]
                   ]
     :repl-options {:host "0.0.0.0"
