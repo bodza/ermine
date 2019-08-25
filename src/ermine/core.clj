@@ -5,13 +5,13 @@
             [flatland.ordered.map :refer [ordered-map]]))
 
 (def ermine-runtime '(
-  (defn assoc [m k v] "return m.cast<map_t>()->assoc(k, v)")
-  (defn dissoc [m k] "return m.cast<map_t>()->dissoc(k)")
+  (defn assoc [m k v] "return m.cast<Map>()->assoc(k, v)")
+  (defn dissoc [m k] "return m.cast<Map>()->dissoc(k)")
 
-  (defn get [m & args] "return m.cast<map_t>()->val_at(args)")
+  (defn get [m & args] "return m.cast<Map>()->val_at(args)")
 
-  (defn vals [m] "return m.cast<map_t>()->vals()")
-  (defn keys [m] "return m.cast<map_t>()->keys()")
+  (defn vals [m] "return m.cast<Map>()->vals()")
+  (defn keys [m] "return m.cast<Map>()->keys()")
 
   (defn atom [x] "return obj<Atom>(x)")
 
@@ -25,25 +25,25 @@
 
   (defn list? [x] "return x.is_type(type_id<Cons>) ? cached::true_o : cached::false_o")
 
-  (defn sequence? [x] "return runtime::is_Sequence(x) ? cached::true_o : cached::false_o")
+  (defn sequence? [x] "return _is_sequence(x) ? cached::true_o : cached::false_o")
 
-  (defn cons [x s] "return runtime::cons(x, s)")
+  (defn cons [x s] "return _cons(x, s)")
 
-  (defn first [s] "return runtime::first(s)")
-  (defn rest [s] "return runtime::rest(s)")
+  (defn first [s] "return _first(s)")
+  (defn rest [s] "return _rest(s)")
 
-  (defn nth [s n] "return runtime::nth(s, Number::unbox(n))")
-  (defn nthrest [s n] "return runtime::nthrest(s, Number::unbox(n))")
+  (defn nth [s n] "return _nth(s, Number::unbox(n))")
+  (defn nthrest [s n] "return _nthrest(s, Number::unbox(n))")
 
   (defn reduce [f r s]
      "Var q = r;
 
-      for_each(i, s)
-        q = call(f, q, i);
+      for (Var x = _first(s), z = _rest(s); !z.is_nil(); x = _first(z), z = _rest(z))
+        q = _call(f, q, x);
 
       return q")
 
-  (defn apply [f & s] "return runtime::apply(f, s)")
+  (defn apply [f & s] "return _apply(f, s)")
 
   (defn nil? [x] "return x.is_nil() ? cached::true_o : cached::false_o")
 
@@ -58,7 +58,7 @@
   (defn > [a b] "return (Number::unbox(a) > Number::unbox(b)) ? cached::true_o : cached::false_o")
   (defn >= [a b] "return (Number::unbox(a) >= Number::unbox(b)) ? cached::true_o : cached::false_o")
 
-  (defn count [s] "return obj<Number>(runtime::count(s))")
+  (defn count [s] "return obj<Number>(_count(s))")
 
   (defn zero? [x] (= x 0))
   (defn pos? [x] (> x 0))
@@ -67,31 +67,32 @@
   (defn + [& args]
     "int value(0);
 
-     for_each(i, args)
+     for (Var i = _first(args), z = _rest(args); !z.is_nil(); i = _first(z), z = _rest(z))
        value = value + Number::unbox(i);
 
      return obj<Number>(value)")
 
   (defn - [& args]
-    "Var a = runtime::first(args);
+    "Var a = _first(args);
+     Var s = _rest(args);
 
      int value = Number::unbox(a);
      size_t count = 1;
 
-     for_each(i, runtime::rest(args)) {
+     for (Var i = _first(s), z = _rest(s); !z.is_nil(); i = _first(z), z = _rest(z)) {
        value = (value - Number::unbox(i));
        count++;
      }
 
      if (count == 1)
-       value = value * int(-1);
+       value = -value;
 
      return obj<Number>(value)")
 
   (defn * [& args]
     "int value(1);
 
-     for_each(i, args)
+     for (Var i = _first(args), z = _rest(args); !z.is_nil(); i = _first(z), z = _rest(z))
        value = (value * Number::unbox(i));
 
      return obj<Number>(value)")
@@ -116,7 +117,7 @@
         (if (sequence? coll)
           (cons (f (first coll)) (map f (rest coll)))))))
 
-  (defn range [n] "return runtime::range(0, Number::unbox(n))")
+  (defn range [n] "return _range(0, Number::unbox(n))")
 
   (defn take [n coll]
     (lazy-seq!
@@ -135,8 +136,8 @@
   (defn drop-while-aux [pred coll]
     "Var s = coll;
 
-     while (call(pred, s))
-       s = runtime::rest(s);
+     while (_call(pred, s))
+       s = _rest(s);
 
      return s")
 
@@ -279,12 +280,12 @@
         else (if (nil? else) "nil()" (c11-form model else))]
     (apply str "(" test " ? " then " : " else ")")))
 
-(defn c11-list [model [_ & args]] (str "runtime::list(" (apply str (interpose ", " (c11-form* model args))) ")"))
+(defn c11-list [model [_ & args]] (str "_list(" (apply str (interpose ", " (c11-form* model args))) ")"))
 
-(defn c11-call [name args] (str "call(" name (if (seq args) (apply str ", " (interpose ", " args)) "") ")"))
+(defn c11-call [name args] (str "_call(" name (if (seq args) (apply str ", " (interpose ", " args)) "") ")"))
 
-(defn c11-nth* [s i] (reduce (fn [s r] (str r "(" s ")")) s (repeat i "runtime::rest")))
-(defn c11-nth [s i] (str "runtime::first(" (c11-nth* s i) ")"))
+(defn c11-nth* [s i] (reduce (fn [s r] (str r "(" s ")")) s (repeat i "_rest")))
+(defn c11-nth [s i] (str "_first(" (c11-nth* s i) ")"))
 
 (defn c11-fn-arg [name s i] (str "Ref " name " = " (c11-nth s i)))
 (defn c11-fn-arg* [name s i] (str "Ref " name " = " (c11-nth* s i)))
@@ -371,15 +372,6 @@ namespace ermine {
       Locking _(lock);
       ::free(p);
     }
-
-    struct RefCount {
-      std::atomic<int> rc;
-
-      RefCount() : rc(0) { }
-
-      void rc_inc() { rc++; }
-      bool rc_dec() { return (--rc == 0); }
-    };
   }
 
   template <typename>
@@ -390,26 +382,32 @@ namespace ermine {
 
   struct Var;
   typedef Var const & Ref;
+
   struct Sequence;
 
-  struct Object : memory::RefCount {
-    Object() { }
+  struct Object {
+    std::atomic<int> rc;
+
+    Object() : rc(0) { }
     virtual ~Object() { };
 
-    virtual type_t type() const = 0;
+    virtual type_t __type() const = 0;
 
-    virtual bool equals(Ref) const;
+    virtual bool __equals(Ref r) const;
 
-    virtual Sequence* as_Sequence() { return nullptr; }
+    virtual Sequence* __sequence() { return nullptr; }
 
     void operator delete(void* p) { memory::free(p); }
+
+    void rc_inc() { rc++; }
+    bool rc_dec() { return (--rc == 0); }
   };
 
   struct Var {
     Object* obj;
 
     Var(Object* o = nullptr) : obj(o) { rc_inc(); }
-    Var(Ref o) : obj(o.obj) { rc_inc(); }
+    Var(Ref r) : obj(r.obj) { rc_inc(); }
     Var(Var&& o) : obj(o.detach()) { }
 
     ~Var() { rc_dec(); }
@@ -422,10 +420,10 @@ namespace ermine {
       return *this;
     }
 
-    Var& operator=(Ref o) {
-      if (obj != o.obj) {
+    Var& operator=(Ref r) {
+      if (obj != r.obj) {
         rc_dec();
-        obj = o.obj;
+        obj = r.obj;
         rc_inc();
       }
       return *this;
@@ -433,8 +431,8 @@ namespace ermine {
 
     bool equals(Ref) const;
 
-    bool operator==(Ref o) const { return equals(o); }
-    bool operator!=(Ref o) const { return !equals(o); }
+    bool operator==(Ref r) const { return equals(r); }
+    bool operator!=(Ref r) const { return !equals(r); }
 
     operator bool() const;
 
@@ -443,7 +441,7 @@ namespace ermine {
 
     bool is_type(type_t type) const {
       if (obj)
-        return (static_cast<Object*>(obj)->type() == type);
+        return (static_cast<Object*>(obj)->__type() == type);
       else
         return false;
     }
@@ -469,12 +467,10 @@ namespace ermine {
     }
   };
 
-  template <>
-  Sequence* Var::cast<Sequence>() const { return obj->as_Sequence(); }
+  bool Object::__equals(Ref r) const { return (this == r.obj); }
 
-  bool Object::equals(Ref o) const {
-    return (this == o.obj);
-  }
+  template <>
+  Sequence* Var::cast<Sequence>() const { return obj->__sequence(); }
 
   template <typename T, typename... A>
   Var obj(A... args) {
@@ -489,51 +485,46 @@ namespace ermine {
 }
 
 namespace ermine {
-    namespace runtime {
-      Var list(Ref x);
-      template <typename... A>
-      Var list(Ref x, A const & ... args);
+  Var _list(Ref x);
 
-      bool is_Sequence(Ref x);
+  template <typename... A>
+  Var _list(Ref x, A const & ... args);
 
-      Var first(Ref s);
-      Var rest(Ref s);
-      Var cons(Ref x, Ref s);
+  bool _is_sequence(Ref x);
 
-      Var nth(Var s, int n);
-      Var nthrest(Var s, int n);
+  Var _cons(Ref x, Ref s);
+  Var _first(Ref s);
+  Var _rest(Ref s);
 
-      size_t count(Var s);
+  Var _nth(Var s, int n);
+  Var _nthrest(Var s, int n);
 
-      Var range(int low, int high);
-    }
+  size_t _count(Var s);
 
-  #define for_each(x,xs) for (Var _tail_ = runtime::rest(xs), x = runtime::first(xs); !_tail_.is_nil(); x = runtime::first(_tail_), _tail_ = runtime::rest(_tail_))
+  Var _range(int low, int high);
 
   template <typename T, typename... A>
-  Var call(T const & fun, A const & ... args);
+  Var _call(T const & fun, A const & ... args);
 
   template <typename T>
-  Var call(T const & fun);
+  Var _call(T const & fun);
 
   template <>
-  Var call(Ref);
+  Var _call(Ref);
 
-  namespace runtime {
-    Var apply(Ref fun, Ref args);
-  }
+  Var _apply(Ref fun, Ref args);
 }
 
 namespace ermine {
   struct Sequence {
-    virtual Var cons(Ref x) = 0;
-    virtual Var first() = 0;
-    virtual Var rest() = 0;
+    virtual Var __cons(Ref x) = 0;
+    virtual Var __first() = 0;
+    virtual Var __rest() = 0;
 
     static bool equals(Var lhs, Var rhs) {
-      for ( ; ; lhs = runtime::rest(lhs), rhs = runtime::rest(rhs)) {
-        Ref lf = runtime::first(lhs);
-        Ref rf = runtime::first(rhs);
+      for ( ; ; lhs = _rest(lhs), rhs = _rest(rhs)) {
+        Ref lf = _first(lhs);
+        Ref rf = _first(rhs);
 
         if (lf.is_nil() && rf.is_nil())
           return true;
@@ -545,20 +536,20 @@ namespace ermine {
   };
 
   struct Fn : Object {
-    type_t type() const { return type_id<Fn>; }
+    virtual type_t __type() const { return type_id<Fn>; }
 
-    virtual Var invoke(Ref args) const = 0;
+    virtual Var __invoke(Ref args) const = 0;
   };
 
   struct Boolean : Object {
-    type_t type() const { return type_id<Boolean>; }
-
     const bool value;
 
     Boolean(bool b) : value(b) { }
 
-    bool equals(Ref o) const {
-      return (value == o.cast<Boolean>()->value);
+    virtual type_t __type() const { return type_id<Boolean>; }
+
+    virtual bool __equals(Ref r) const {
+      return (value == r.cast<Boolean>()->value);
     }
   };
 
@@ -570,34 +561,34 @@ namespace ermine {
   Var::operator bool() const {
     if (obj == nullptr)
       return false;
-    else if (obj->type() == (type_t)type_id<Boolean>)
+    else if (obj->__type() == (type_t)type_id<Boolean>)
       return cast<Boolean>()->value;
     else
       return true;
   }
 
-  bool Var::equals(Ref o) const {
-    if (obj == o.obj)
+  bool Var::equals(Ref r) const {
+    if (obj == r.obj)
       return true;
-    else if (is_nil() || o.is_nil())
+    else if (is_nil() || r.is_nil())
       return false;
-    else if (runtime::is_Sequence(*this) && runtime::is_Sequence(o))
-      return Sequence::equals(*this, o);
-    else if (obj->type() != o.obj->type())
+    else if (_is_sequence(*this) && _is_sequence(r))
+      return Sequence::equals(*this, r);
+    else if (obj->__type() != r.obj->__type())
       return false;
     else
-      return obj->equals(o);
+      return obj->__equals(r);
   }
 
   struct Number : Object {
-    type_t type() const { return type_id<Number>; }
-
     const int value;
 
     Number(int n) : value(n) { }
 
-    bool equals(Ref o) const {
-      return (value == Number::unbox(o));
+    virtual type_t __type() const { return type_id<Number>; }
+
+    virtual bool __equals(Ref r) const {
+      return (value == Number::unbox(r));
     }
 
     static int unbox(Ref r) {
@@ -606,7 +597,7 @@ namespace ermine {
   };
 
   struct EmptyList : Object {
-    type_t type() const { return type_id<EmptyList>; }
+    virtual type_t __type() const { return type_id<EmptyList>; }
   };
 
   namespace cached {
@@ -614,40 +605,34 @@ namespace ermine {
   }
 
   struct Cons : Object, Sequence {
-    type_t type() const { return type_id<Cons>; }
-
     const Var next;
     const Var data;
 
     Cons(Ref d = nil(), Ref n = nil()) : next(n), data(d) { }
 
-    virtual Sequence* as_Sequence() { return this; }
+    virtual type_t __type() const { return type_id<Cons>; }
 
-    Var cons(Ref x) { return obj<Cons>(x, Var(this)); }
+    virtual Sequence* __sequence() { return this; }
 
-    Var first() { return data; }
-
-    Var rest() { return next; }
+    virtual Var __cons(Ref x) { return obj<Cons>(x, Var(this)); }
+    virtual Var __first() { return data; }
+    virtual Var __rest() { return next; }
   };
 
-  namespace runtime {
-    Var list() {
-      return cached::empty_list_o;
-    }
+  Var _list() {
+    return cached::empty_list_o;
+  }
 
-    Var list(Ref x) {
-      return obj<Cons>(x, cached::empty_list_o);
-    }
+  Var _list(Ref x) {
+    return obj<Cons>(x, cached::empty_list_o);
+  }
 
-    template <typename... A>
-    Var list(Ref x, A const & ... args) {
-      return obj<Cons>(x, list(args...));
-    }
+  template <typename... A>
+  Var _list(Ref x, A const & ... args) {
+    return obj<Cons>(x, _list(args...));
   }
 
   struct LazySeq : Object, Sequence {
-    type_t type() const { return type_id<LazySeq>; }
-
     std::mutex lock;
     Var data;
     Var thunk;
@@ -655,9 +640,11 @@ namespace ermine {
     LazySeq(Ref t) : thunk(t) { }
     LazySeq(Ref d, Ref t) : data(d), thunk(t) { }
 
-    virtual Sequence* as_Sequence() { return this; }
+    virtual type_t __type() const { return type_id<LazySeq>; }
 
-    Var cons(Ref x) {
+    virtual Sequence* __sequence() { return this; }
+
+    virtual Var __cons(Ref x) {
       Locking _(lock);
 
       if (data.is_nil())
@@ -666,79 +653,79 @@ namespace ermine {
         return obj<Cons>(x, Var((Object*)this));
     }
 
-    Var first() {
+    virtual Var __first() {
       Locking _(lock);
 
       if (data.is_nil())
-        return runtime::first(call(thunk));
+        return _first(_call(thunk));
       else
         return data;
     }
 
-    Var rest() {
+    virtual Var __rest() {
       Locking _(lock);
-      Var s = call(thunk);
+      Var s = _call(thunk);
 
       if (data.is_nil())
-        return runtime::rest(s);
+        return _rest(s);
       else if (s.is_nil())
-        return runtime::list();
+        return _list();
       else
         return s;
     }
   };
 
-  struct ConsMap : Fn, Sequence {
-    type_t type() const { return type_id<ConsMap>; }
-
+  struct Map : Fn, Sequence {
     Var data;
 
-    ConsMap() : data(runtime::list(runtime::list())) { }
+    Map() : data(_list(_list())) { }
 
-    ConsMap(Ref l) : data(l) { }
+    Map(Ref l) : data(l) { }
+
+    virtual type_t __type() const { return type_id<Map>; }
 
     Var assoc(Ref k, Ref v) const {
       Ref m = dissoc_aux(k);
-      Ref _keys = runtime::first(m);
-      Ref _values = runtime::rest(m);
+      Ref _keys = _first(m);
+      Ref _values = _rest(m);
 
-      return obj<ConsMap>(runtime::cons(runtime::cons(k, _keys), runtime::cons(v, _values)));
+      return obj<Map>(_cons(_cons(k, _keys), _cons(v, _values)));
     }
 
     Var dissoc_aux(Ref k) const {
-      Ref _keys = runtime::first(data);
-      Var _values = runtime::rest(data);
+      Ref _keys = _first(data);
+      Var _values = _rest(data);
 
       Var ks;
       Var vs;
 
-      for_each(i, _keys) {
+      for (Var i = _first(_keys), z = _rest(_keys); !z.is_nil(); i = _first(z), z = _rest(z)) {
         if (i != k) {
-          ks = runtime::cons(i, ks);
-          vs = runtime::cons(runtime::first(_values), vs);
-          _values = runtime::rest(_values);
+          ks = _cons(i, ks);
+          vs = _cons(_first(_values), vs);
+          _values = _rest(_values);
         }
       }
 
-      return runtime::cons(ks, vs);
+      return _cons(ks, vs);
     }
 
     Var dissoc(Ref k) const {
-      return obj<ConsMap>(dissoc_aux(k));
+      return obj<Map>(dissoc_aux(k));
     }
 
     Var val_at(Ref args) const {
-      Ref key = runtime::first(args);
-      Ref not_found = runtime::first(runtime::rest(args));
+      Ref key = _first(args);
+      Ref not_found = _first(_rest(args));
 
-      Ref _keys = runtime::first(data);
-      Var _values = runtime::rest(data);
+      Ref _keys = _first(data);
+      Var _values = _rest(data);
 
-      for_each(i, _keys) {
+      for (Var i = _first(_keys), z = _rest(_keys); !z.is_nil(); i = _first(z), z = _rest(z)) {
         if (key == i)
-          return runtime::first(_values);
+          return _first(_values);
 
-        _values = runtime::rest(_values);
+        _values = _rest(_values);
       }
 
       if (!not_found.is_nil())
@@ -747,86 +734,84 @@ namespace ermine {
         return nil();
     }
 
-    Var invoke(Ref args) const {
+    virtual Var __invoke(Ref args) const {
       return val_at(args);
     }
 
-    Var vals() const { return runtime::rest(data); }
-    Var keys() const { return runtime::first(data); }
+    Var vals() const { return _rest(data); }
+    Var keys() const { return _first(data); }
 
-    virtual Sequence* as_Sequence() { return this; }
+    virtual Sequence* __sequence() { return this; }
 
-    Var cons(Ref v) {
-      return runtime::list(v, data);
+    virtual Var __cons(Ref v) {
+      return _list(v, data);
     }
 
-    Var first() {
-      Ref _keys = runtime::first(data);
-      Ref _values = runtime::rest(data);
+    virtual Var __first() {
+      Ref _keys = _first(data);
+      Ref _values = _rest(data);
 
-      return runtime::list(runtime::first(_keys), runtime::first(_values));
+      return _list(_first(_keys), _first(_values));
     }
 
-    Var rest() {
-      Ref _keys = runtime::first(data);
-      Ref _values = runtime::rest(data);
+    virtual Var __rest() {
+      Ref _keys = _first(data);
+      Ref _values = _rest(data);
 
-      if (runtime::rest(_keys).is_type(type_id<EmptyList>))
-        return runtime::list();
+      if (_rest(_keys).is_type(type_id<EmptyList>))
+        return _list();
       else
-        return obj<ConsMap>(runtime::cons(runtime::rest(_keys), runtime::rest(_values)));
+        return obj<Map>(_cons(_rest(_keys), _rest(_values)));
     }
   };
 
   template <>
-  Var obj<ConsMap>(Var keys, Var vals) {
-    void* storage = memory::allocate<ConsMap>();
+  Var obj<Map>(Var keys, Var vals) {
+    void* storage = memory::allocate<Map>();
 
-    return Var(new(storage) ConsMap(runtime::cons(keys, vals)));
+    return Var(new(storage) Map(_cons(keys, vals)));
   }
 
-  typedef ConsMap map_t;
-
   struct String : Object, Sequence {
-    type_t type() const { return type_id<String>; }
-
     Var data;
 
-    String() : data(runtime::list()) { }
+    String() : data(_list()) { }
 
     String(Ref s) : data(s) { }
 
-    virtual Sequence* as_Sequence() { return this; }
+    virtual type_t __type() const { return type_id<String>; }
 
-    Var cons(Ref x) {
-      return obj<String>(runtime::cons(x, data));
+    virtual Sequence* __sequence() { return this; }
+
+    virtual Var __cons(Ref x) {
+      return obj<String>(_cons(x, data));
     }
 
-    Var first() {
-      return runtime::first(data);
+    virtual Var __first() {
+      return _first(data);
     }
 
-    Var rest() {
-      Ref r = runtime::rest(data);
+    virtual Var __rest() {
+      Ref r = _rest(data);
 
       if (r.is_type(type_id<EmptyList>))
-        return runtime::list();
+        return _list();
       else
         return obj<String>(r);
     }
   };
 
   struct Atom : Object {
-    type_t type() const { return type_id<Atom>; }
-
     std::mutex lock;
     Var data;
 
     Atom(Ref d) : data(d) { }
 
+    virtual type_t __type() const { return type_id<Atom>; }
+
     Var swap(Ref f, Ref args) {
       Locking _(lock);
-      data = f.cast<Fn>()->invoke(runtime::cons(data, args));
+      data = f.cast<Fn>()->__invoke(_cons(data, args));
       return data;
     }
 
@@ -852,123 +837,119 @@ namespace _main {
 }
 
 namespace ermine {
-  namespace runtime {
-    bool is_Sequence(Ref x) {
-      if (x.cast<Sequence>())
-        return true;
-      else
-        return false;
-    }
+  bool _is_sequence(Ref x) {
+    if (x.cast<Sequence>())
+      return true;
+    else
+      return false;
+  }
 
-    Var first(Ref s) {
-      if (s.is_nil() || s.is_type(type_id<EmptyList>))
-        return nil();
-      else
-        return s.cast<Sequence>()->first();
-    }
+  Var _cons(Ref x, Ref s) {
+    if (s.is_nil() || s.is_type(type_id<EmptyList>))
+      return _list(x);
+    else
+      return s.cast<Sequence>()->__cons(x);
+  }
 
-    Var rest(Ref s) {
-      if (s.is_nil() || s.is_type(type_id<EmptyList>))
-        return nil();
-      else
-        return s.cast<Sequence>()->rest();
-    }
+  Var _first(Ref s) {
+    if (s.is_nil() || s.is_type(type_id<EmptyList>))
+      return nil();
+    else
+      return s.cast<Sequence>()->__first();
+  }
 
-    Var cons(Ref x, Ref s) {
-      if (s.is_nil() || s.is_type(type_id<EmptyList>))
-        return runtime::list(x);
-      else
-        return s.cast<Sequence>()->cons(x);
-    }
+  Var _rest(Ref s) {
+    if (s.is_nil() || s.is_type(type_id<EmptyList>))
+      return nil();
+    else
+      return s.cast<Sequence>()->__rest();
+  }
 
-    Var nth(Var s, int n) {
-      if (n < 0)
-        return nil();
+  Var _nth(Var s, int n) {
+    if (n < 0)
+      return nil();
 
-      for (int i = 0; i < n; i++)
-        s = runtime::rest(s);
+    for (int i = 0; i < n; i++)
+      s = _rest(s);
 
-      return runtime::first(s);
-    }
+    return _first(s);
+  }
 
-    Var nthrest(Var s, int n) {
-      for (int i = 0; i < n; i++)
-        s = runtime::rest(s);
+  Var _nthrest(Var s, int n) {
+    for (int i = 0; i < n; i++)
+      s = _rest(s);
 
-      if (s.is_nil())
-        return runtime::list();
-      else
-        return s;
-    }
+    if (s.is_nil())
+      return _list();
+    else
+      return s;
+  }
 
-    size_t count(Var s) {
-      size_t n = 0;
+  size_t _count(Var s) {
+    size_t n = 0;
 
-      for (s = runtime::rest(s); !s.is_nil(); s = runtime::rest(s))
-        n++;
+    for (s = _rest(s); !s.is_nil(); s = _rest(s))
+      n++;
 
-      return n;
-    }
+    return n;
+  }
 
-    Var range(int low, int high) {
-      struct Range : Fn {
-        int low, high;
+  Var _range(int low, int high) {
+    struct Range : Fn {
+      int low, high;
 
-        Range(int l, int h) : low(l), high(h) { }
+      Range(int l, int h) : low(l), high(h) { }
 
-        Var invoke(Ref) const {
-          if (low < high)
-            return obj<LazySeq>(obj<Number>(low), obj<Range>((low + 1), high));
-          else
-            return nil();
-        }
-      };
+      virtual Var __invoke(Ref) const {
+        if (low < high)
+          return obj<LazySeq>(obj<Number>(low), obj<Range>((low + 1), high));
+        else
+          return nil();
+      }
+    };
 
-      return obj<LazySeq>(obj<Range>(low, high));
-    }
+    return obj<LazySeq>(obj<Range>(low, high));
   }
 
   template <typename T, typename... A>
-  Var call(T const & fun, A const & ... args) {
-    return fun.invoke(runtime::list(args...));
+  Var _call(T const & fun, A const & ... args) {
+    return fun.__invoke(_list(args...));
   }
 
   template <typename T>
-  Var call(T const & fun) {
-    return fun.invoke(nil());
+  Var _call(T const & fun) {
+    return fun.__invoke(nil());
   }
 
   template <>
-  Var call(Ref fun) {
-    return fun.cast<Fn>()->invoke(nil());
+  Var _call(Ref fun) {
+    return fun.cast<Fn>()->__invoke(nil());
   }
 
   template <typename... A>
-  Var call(Ref fun, A const & ... args) {
-    return fun.cast<Fn>()->invoke(runtime::list(args...));
+  Var _call(Ref fun, A const & ... args) {
+    return fun.cast<Fn>()->__invoke(_list(args...));
   }
 
-  namespace runtime {
-    Var apply(Ref f, Ref args) {
-      if (runtime::rest(args).is_type(type_id<EmptyList>))
-        return f.cast<Fn>()->invoke(runtime::first(args));
+  Var _apply(Ref f, Ref args) {
+    if (_rest(args).is_type(type_id<EmptyList>))
+      return f.cast<Fn>()->__invoke(_first(args));
 
-      struct {
-        Var operator()(Ref s) const {
-          Ref x = runtime::first(s);
+    struct {
+      Var operator()(Ref s) const {
+        Ref x = _first(s);
 
-          if (x.is_nil())
-            return cached::empty_list_o;
+        if (x.is_nil())
+          return cached::empty_list_o;
 
-          if (x.cast<Sequence>())
-            return x;
+        if (x.cast<Sequence>())
+          return x;
 
-          return runtime::cons(x, (*this)(runtime::rest(s)));
-        }
-      } spread;
+        return _cons(x, (*this)(_rest(s)));
+      }
+    } spread;
 
-      return f.cast<Fn>()->invoke(spread(args));
-    }
+    return f.cast<Fn>()->__invoke(spread(args));
   }
 }
 
@@ -986,20 +967,14 @@ namespace _main {
 "
       ))
 "
-    Var invoke(Ref _args_) const;
-  };
-"
-      )) (:lambdas model)))
-
-    (apply str (map (fn [f] (str
-"
-  Var " (:name f) "::invoke(Ref _args_) const {
-    (void)(_args_);
+    virtual Var __invoke(Ref _args_) const {
+      (void)(_args_);
 "
       (apply str (interpose "\n" (map (fn [%] (str "    " % ";")) (:vars f))))
       (apply str (interpose "\n" (map (fn [%] (str "    " % ";")) (:body f))))
 "
-  }
+    }
+  };
 "
       )) (:lambdas model)))
 "
