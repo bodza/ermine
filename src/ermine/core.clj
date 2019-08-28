@@ -1,9 +1,12 @@
 (ns ermine.core
-  (:refer-clojure :only [= apply assoc atom boolean? conj cons dec defmacro deref first fn gensym hash-map hash-set identical? inc int keyword? lazy-seq let letfn list loop next number? pos? print read-line read-string reduce repeat reverse seq seq? sequential? str string? swap! symbol symbol? update vector?  *ns* *print-length* .. intern]) (:require [clojure.core :as -])
+  (:refer-clojure :only [= apply assoc atom boolean? conj cons dec defmacro deref first fn hash-map hash-set identical? inc int keyword? lazy-seq let letfn list loop neg? next number? pos? print read-line read-string seq seq? sequential? str string? swap! symbol symbol? update vector?  *ns* *print-length* .. intern]) (:require [clojure.core :as -])
   (:require [flatland.ordered.map :refer [ordered-map]]))
 
 (defmacro declare [name] (list 'def name))
 (defmacro defn [name args & body] (list 'def name (apply list 'fn args body)))
+
+(let [i' (atom 0)]
+  (defn gensym [prefix] (symbol (str prefix (swap! i' inc)))))
 
 (defmacro and [x y] (let [x# (gensym "x__")] (list 'let [x# x] (list 'if x# y x#))))
 (defmacro or [x y] (let [x# (gensym "x__")] (list 'let [x# x] (list 'if x# x# y))))
@@ -17,20 +20,24 @@
 
 (defn complement [f] (fn [x] (not (f x))))
 
-(defn empty? [x] (not (seq x)))
-(defn count [x] (loop [n 0 s (seq x)] (if s (recur (inc n) (next s)) n)))
-(defn second [s] (first (next s)))
+(defn empty? [s] (not (seq s)))
 (defn every? [f? s] (or (empty? s) (and (f? (first s)) (recur f? (next s)))))
 
+(defn count [s] (loop [n 0 s (seq s)] (if s (recur (inc n) (next s)) n)))
+(defn second [s] (first (next s)))
+(defn nth [s n not-found] (loop [s (seq s) n n] (if (and s (pos? n)) (if (neg? n) (first s) (recur (next s) (dec n))) not-found)))
+
+(defn repeat [x] (lazy-seq (cons x (repeat x))))
 (defn repeatedly [f] (lazy-seq (cons (f) (repeatedly f))))
+
 (defn concat [s1 s2] (lazy-seq (if (seq s1) (cons (first s1) (concat (next s1) s2)) s2)))
+(defn flatten [s] (lazy-seq (if (seq s) (let [x (first s)] (if (seq x) (concat (flatten x) (flatten (next s))) (cons x (flatten (next s))))))))
+
 (defn filter [f? s] (lazy-seq (if (seq s) (let [x (first s)] (if (f? x) (cons x (filter f? (next s))) (filter f? (next s)))))))
 (defn remove [f? s] (filter (complement f?) s))
 
 (defn take-while [f? s] (lazy-seq (if (seq s) (let [x (first s)] (if (f? x) (cons x (take-while f? (next s))))))))
-(defn drop-while [f? s]
-  (letfn [(drop- [f? s] (let [s (seq s)] (if (and s (f? (first s))) (recur f? (next s)) s)))]
-    (lazy-seq (drop- f? s))))
+(defn drop-while [f? s] (lazy-seq (loop [s (seq s)] (if (and s (f? (first s))) (recur (next s)) s))))
 
 (defn take [n s] (lazy-seq (if (and (pos? n) (seq s)) (cons (first s) (take (dec n) (next s))))))
 (defn nthnext [s n] (loop [s (seq s) n n] (if (and s (pos? n)) (recur (next s) (dec n)) s)))
@@ -40,15 +47,11 @@
 (defn partition [n s] (lazy-seq (if (seq s) (let [p (take n s)] (if (= (count p) n) (cons p (partition n (nthnext s n))))))))
 
 (defn map [f s] (lazy-seq (if (seq s) (cons (f (first s)) (map f (next s))))))
-(defn mapcat [f s] (apply concat (map f s)))
+(defn map-indexed [f i s] (lazy-seq (if (seq s) (cons (f i (first s)) (map-indexed f (inc i) (next s))))))
 
-(defn map-indexed [f s]
-  (letfn [(mapi- [i s] (lazy-seq (if (seq s) (cons (f i (first s)) (mapi- (inc i) (next s))))))]
-    (mapi- 0 s)))
+(defn reduce [f r s] (loop [r r s (seq s)] (if s (recur (f r (first s)) (next s)) r)))
 
-(defn flatten [form]
-  (letfn [(walk- [form] (lazy-seq (cons form (if (sequential? form) (mapcat walk- form)))))]
-    (remove sequential? (next (walk- form)))))
+(defn reverse [s] (reduce (fn [s x] (cons x s)) (list) s))
 
 (defn form? [s] (fn [f] (and (seq? f) (= (first f) s))))
 
@@ -79,9 +82,9 @@
         form (transform form (form? 'declare) (fn [[_ name]] (list 'def name)))
         form (transform form (form? 'defn) (fn [[_ name args & body]] (list 'def name (apply list 'fn args body))))
         form (transform form (form? 'do) (fn [[_ & body]] (apply list 'let [] body)))
-        form (transform form (form? 'let) (fn [[_ bindings & body]] (let-closure bindings body)))]
         form (transform form (form? 'and) (fn [[_ x y]] (let [x# (gensym "x__")] (list 'let [x# x] (list 'if x# y x#)))))
         form (transform form (form? 'or) (fn [[_ x y]] (let [x# (gensym "x__")] (list 'let [x# x] (list 'if x# x# y)))))
+        form (transform form (form? 'let) (fn [[_ bindings & body]] (let-closure bindings body)))]
     (transform form (form? 'fn) (fn [[_ args & body]] (fn-made-unique args body)))))
 
 (defn ffi-fn? [body] (and (seq body) (every? string? body)))
@@ -117,7 +120,8 @@
 (defn c11-symbol [s]
   (if (= 'not s) '_not_
     (if (= '- s) '_minus_
-      (symbol (escape (str s) (hash-map "-" "_", "*" "_star_", "+" "_plus_", "/" "_slash_", "<" "_lt_", ">" "_gt_", "=" "_eq_", "?" "_qmark_", "!" "_bang_", "#" "__"))))))
+      (symbol (escape (str s)
+                (hash-map "-" "_", "*" "_star_", "+" "_plus_", "/" "_slash_", "<" "_lt_", ">" "_gt_", "=" "_eq_", "?" "_qmark_", "!" "_bang_", "'" "_apos_", "#" "__"))))))
 
 (defn c11-symbols [form] (transform form symbol? c11-symbol))
 
@@ -130,7 +134,7 @@
     (swap! model update :lambdas reverse)
     (assoc (deref model) :program (remove empty? program))))
 
-(defn c11-nth* [s i] (reduce (fn [s r] (str r "(" s ")")) s (repeat i "_next")))
+(defn c11-nth* [s i] (reduce (fn [s r] (str r "(" s ")")) s (take i (repeat "_next"))))
 (defn c11-nth [s i] (str "_first(" (c11-nth* s i) ")"))
 
 (defn c11-fn-arg [name s i] (str "Ref " name " = " (c11-nth s i)))
@@ -145,7 +149,7 @@
         (c11-fn-arg arg parent i)
         (if (sequential? arg)
           (destructure-args arg (c11-nth parent i)))))
-    (remove (fn [%] (= (second %) '_)) (map-indexed list args))))
+    (remove (fn [%] (= (second %) '_)) (map-indexed list 0 args))))
 
 (defn destructure-more [more parent i]
   (if (nil? more)
