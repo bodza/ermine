@@ -5,6 +5,7 @@
     :repl-options {:host "0.0.0.0"
                    :port 7888
                    :init-ns ermine.core}
+    :jvm-opts ["-Xss16m"]
     :source-paths ["src"]
     :main ermine.core
     :aliases {"ermine" ["run" "-m" "ermine.core"]})
