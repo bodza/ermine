@@ -90,7 +90,7 @@
 (defn fn-made-unique [args & body]
   (if (symbol? args)
     (list 'Z (list 'fn (vector args) (apply list 'fn body)))
-    (let [syms (filter fn-arg-symbol? (flatten args))]
+    (let [syms (filter fn-arg-symbol? args)]
       (let [uniq (apply hash-map (interleave syms (map (fn [%] (symbol (str % (gensym "__")))) syms)))]
         (apply list 'ast-lambda (transform args uniq uniq) (transform body uniq uniq))))))
 
@@ -123,7 +123,7 @@
                (fn [args & body]
                  (let [body (! body fns (concat args env))]
                    (let [syms (reduce conj (hash-set) (filter symbol? (flatten body)))]
-                     (let [env  (apply list (filter syms (reduce conj (hash-set) (flatten env))))]
+                     (let [env  (apply list (filter syms (reduce conj (hash-set) env)))]
                        (let [args (transform args symbol? (fn [s] (if (or (= s '&) (syms s)) s '_)))]
                          (or (fn-defined? fns env args body) (define-fn fns env args body)))))))))]
      (let [fns (atom (ordered-map))]
@@ -156,27 +156,27 @@
 (defn c11-nth [s i] (str "_first(" (c11-nth* s i) ")"))
 
 (defn destructure-args [args] (map-indexed (fn [i name] (str "Ref " name " = " (c11-nth "_args_" i))) 0 args))
-(defn destructure-more [name i] (if (nil? name) (list) (str "Ref " name " = " (c11-nth* "_args_" i))))
+(defn destructure-more [name i] (if (some? name) (list (str "Ref " name " = " (c11-nth* "_args_" i)))))
 
 (defn c11-destructure [args]
   (let [arg? (fn [%] (not (= % '&)))]
     (let [more (second (drop-while arg? args))]
       (let [args (take-while arg? args)]
-        (list (destructure-args args) (destructure-more more (count args)))))))
+        (concat (destructure-args args) (destructure-more more (count args)))))))
+
+(defn c11-return [model & body]
+  (if (seq body)
+    (let [e (reverse (c11-form* model body))] (reverse (cons (str "return " (first e)) (next e))))
+    (list "return nil()")))
 
 (defn c11-defn [model name env args & body]
-  (let [body (if (seq body)
-               (let [% (reverse (c11-form* model body))] (reverse (cons (str "return " (first %)) (next %))))
-               (list "return nil()"))]
-    (let [env (filter fn-arg-symbol? (flatten env))]
-      (let [vars (flatten (c11-destructure args))]
-        (hash-map ':name name ':env env ':args args ':vars vars ':body body)))))
+  (hash-map ':name name ':env (filter fn-arg-symbol? env) ':args args ':vars (c11-destructure args) ':body (apply c11-return model body)))
 
 (defn c11-call [name args] (str "_call(" name (if (seq args) (apply str ", " (interpose ", " args)) "") ")"))
 
 (defn c11-list [m f & s]
   (if (= f 'ast_defn) (let [_ (swap! m update ':lambdas (fn [%] (cons (apply c11-defn m s) %)))] "")
-    (if (= f 'ast_fn)   (str "obj<" (first s) ">(" (apply str (interpose ", " (filter fn-arg-symbol? (flatten (next s))))) ")")
+    (if (= f 'ast_fn)   (str "obj<" (first s) ">(" (apply str (interpose ", " (filter fn-arg-symbol? (next s)))) ")")
       (if (= f 'if)       (str "(" (c11-form m (first s)) " ? " (c11-form m (second s)) " : " (c11-form m (third s)) ")")
         (if (= f 'Atom.)    (str "obj<Atom>(" (c11-form m (first s)) ")")
           (if (= f 'Cons.)    (str "obj<Cons>(" (c11-form m (first s)) ", " (c11-form m (second s)) ")")
