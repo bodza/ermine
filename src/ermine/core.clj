@@ -1,14 +1,27 @@
 (ns ermine.core
-  (:refer-clojure :only [= apply assoc boolean? conj dec deref first hash-map hash-set inc int list neg? next number? pos? print read-line read-string seq seq? sequential? str string? swap! symbol symbol? update  defmacro identical? vector  *ns* *print-length* .. intern]) (:require [clojure.core :as -])
+  (:refer-clojure :only #_[& -1 0 1 def false fn* if quote true] [+ < = apply assoc boolean? conj deref first get hash-map hash-set int list next number? print read-line read-string seq seq? sequential? str string? swap! symbol symbol?  defmacro identical? vector  *ns* *print-length* .. intern]) (:require [clojure.core :as -])
   (:require [flatland.ordered.map :refer [ordered-map]]))
 
 (defmacro fn [args & body] (apply list 'fn* args body))
-(defmacro let [binding & body] (apply list 'let* binding body))
 
 (defmacro declare [name] (list 'def name))
 (defmacro defn [name args & body] (list 'def name (apply list 'fn args body)))
 
+(defn second [s] (first (next s)))
+(defn third [s] (first (next (next s))))
+
+(defmacro let [binding & body]
+  (if (seq binding)
+    (list (apply list 'fn (vector (first binding)) body) (second binding))
+    (list (apply list 'fn (vector) body))))
+
 (defn Z [f] ((fn [x] (x x)) (fn [x] (f (fn [& s] (apply (x x) s))))))
+
+(defn dec [n] (+ n -1))
+(defn inc [n] (+ n 1))
+
+(defn neg? [n] (< n 0))
+(defn pos? [n] (< 0 n))
 
 (defmacro Atom. [x] (list 'new 'clojure.lang.Atom x))
 
@@ -28,8 +41,6 @@
 (defn some? [x] (not (nil? x)))
 
 (defn count [s] ((fn ! [n s] (if s (! (inc n) (next s)) n)) 0 (seq s)))
-(defn second [s] (first (next s)))
-(defn third [s] (first (next (next s))))
 (defn nth [s n not-found] ((fn ! [s n] (if (and s (pos? n)) (if (neg? n) (first s) (! (next s) (dec n))) not-found)) (seq s) n))
 
 (defmacro Cons. [car cdr] (list 'new 'clojure.lang.Cons car cdr))
@@ -61,6 +72,8 @@
 
 (defn reverse [s] (reduce (fn [s x] (cons x s)) (list) s))
 
+(defn update [m k f & s] (assoc m k (apply f (get m k) s)))
+
 (defn form? [s] (fn [f] (and (seq? f) (= (first f) s))))
 
 (defn fn-arg-symbol? [s] (and (symbol? s) (not (= s '&))))
@@ -91,7 +104,8 @@
               (let [s (transform* s (form? 'or)       (fn [x y] (let [x# (gensym "x__")] (list 'let (vector x# x) (list 'if x# x# y)))))]
                 (let [s (transform* s (form? 'lazy-seq) (fn [& body] (list 'LazySeq. (apply list 'fn (vector) body))))]
                   (let [s (transform* s (form? 'let)      let-closure)]
-                            (transform* s (form? 'fn)       fn-made-unique)))))))))))
+                    (let [s (transform* s (form? 'fn)       fn-made-unique)]
+                              (transform* s (form? 'vector)   (fn [& v] (apply list 'list v))))))))))))))
 
 (defn fn-defined? [fns env args body]
   (let [name ((deref fns) (apply list env args body))]
@@ -141,42 +155,21 @@
 (defn c11-nth* [s i] (reduce (fn [s r] (str r "(" s ")")) s (take i (repeat "_next"))))
 (defn c11-nth [s i] (str "_first(" (c11-nth* s i) ")"))
 
-(defn c11-fn-arg [name s i] (str "Ref " name " = " (c11-nth s i)))
-(defn c11-fn-arg* [name s i] (str "Ref " name " = " (c11-nth* s i)))
+(defn destructure-args [args] (map-indexed (fn [i name] (str "Ref " name " = " (c11-nth "_args_" i))) 0 args))
+(defn destructure-more [name i] (if (nil? name) (list) (str "Ref " name " = " (c11-nth* "_args_" i))))
 
-(declare destructure-args)
-
-(defn destructure-seq [args parent]
-  (map-indexed
-    (fn [i arg]
-      (if (symbol? arg)
-        (c11-fn-arg arg parent i)
-        (if (sequential? arg)
-          (destructure-args arg (c11-nth parent i)))))
-    0 args))
-
-(defn destructure-more [more parent i]
-  (if (nil? more)
-    (list)
-    (if (symbol? more)
-      (c11-fn-arg* more parent i)
-      (if (sequential? more)
-        (let [tmp# (gensym "tmp__")]
-          (list (c11-fn-arg* tmp# parent i) (destructure-args more tmp#)))))))
-
-(defn destructure-args [args parent]
+(defn c11-destructure [args]
   (let [arg? (fn [%] (not (= % '&)))]
     (let [more (second (drop-while arg? args))]
       (let [args (take-while arg? args)]
-        (list (destructure-seq args parent) (destructure-more more parent (count args)))))))
+        (list (destructure-args args) (destructure-more more (count args)))))))
 
 (defn c11-defn [model name env args & body]
   (let [body (if (seq body)
-               (let [% (reverse (c11-form* model body))]
-                 (reverse (cons (str "return " (first %)) (next %))))
+               (let [% (reverse (c11-form* model body))] (reverse (cons (str "return " (first %)) (next %))))
                (list "return nil()"))]
-    (let [env  (filter fn-arg-symbol? (flatten env))]
-      (let [vars (flatten (destructure-args args "_args_"))]
+    (let [env (filter fn-arg-symbol? (flatten env))]
+      (let [vars (flatten (c11-destructure args))]
         (hash-map ':name name ':env env ':args args ':vars vars ':body body)))))
 
 (defn c11-call [name args] (str "_call(" name (if (seq args) (apply str ", " (interpose ", " args)) "") ")"))
