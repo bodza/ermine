@@ -1,12 +1,14 @@
 (ns ermine.core
-  (:refer-clojure :only [= apply assoc boolean? conj dec deref first hash-map hash-set inc int list neg? next number? pos? print read-line read-string seq seq? sequential? str string? swap! symbol symbol? update  defmacro destructure identical? #_maybe-destructured vector?  *ns* *print-length* .. intern]) (:require [clojure.core :as -])
+  (:refer-clojure :only [= apply assoc boolean? conj dec deref first hash-map hash-set inc int list neg? next number? pos? print read-line read-string seq seq? sequential? str string? swap! symbol symbol? update  defmacro identical? vector  *ns* *print-length* .. intern]) (:require [clojure.core :as -])
   (:require [flatland.ordered.map :refer [ordered-map]]))
 
-(defmacro fn [args & body] (apply list 'fn* (#'-/maybe-destructured args body)))
-(defmacro let [bindings & body] (apply list 'let* (destructure bindings) body))
+(defmacro fn [args & body] (apply list 'fn* args body))
+(defmacro let [binding & body] (apply list 'let* binding body))
 
 (defmacro declare [name] (list 'def name))
 (defmacro defn [name args & body] (list 'def name (apply list 'fn args body)))
+
+(defn Z [f] ((fn [x] (x x)) (fn [x] (f (fn [& s] (apply (x x) s))))))
 
 (defmacro Atom. [x] (list 'new 'clojure.lang.Atom x))
 
@@ -15,8 +17,8 @@
 (let [i' (atom 0)]
   (defn gensym [prefix] (symbol (str prefix (swap! i' inc)))))
 
-(defmacro and [x y] (let [x# (gensym "x__")] (list 'let [x# x] (list 'if x# y x#))))
-(defmacro or [x y] (let [x# (gensym "x__")] (list 'let [x# x] (list 'if x# x# y))))
+(defmacro and [x y] (let [x# (gensym "x__")] (list 'let (vector x# x) (list 'if x# y x#))))
+(defmacro or [x y] (let [x# (gensym "x__")] (list 'let (vector x# x) (list 'if x# x# y))))
 
 (defn identity [x] x)
 (defn constantly [x] (fn [& _] x))
@@ -25,18 +27,13 @@
 (defn not [x] (if x false true))
 (defn some? [x] (not (nil? x)))
 
-(defn complement [f] (fn [x] (not (f x))))
-
-(defn empty? [s] (not (seq s)))
-(defn every? [f? s] (or (empty? s) (and (f? (first s)) (every? f? (next s)))))
-
-(defn count [s] ((fn* ! [n s] (if s (! (inc n) (next s)) n)) 0 (seq s)))
+(defn count [s] ((fn ! [n s] (if s (! (inc n) (next s)) n)) 0 (seq s)))
 (defn second [s] (first (next s)))
 (defn third [s] (first (next (next s))))
-(defn nth [s n not-found] ((fn* ! [s n] (if (and s (pos? n)) (if (neg? n) (first s) (! (next s) (dec n))) not-found)) (seq s) n))
+(defn nth [s n not-found] ((fn ! [s n] (if (and s (pos? n)) (if (neg? n) (first s) (! (next s) (dec n))) not-found)) (seq s) n))
 
 (defmacro Cons. [car cdr] (list 'new 'clojure.lang.Cons car cdr))
-(defmacro lazy-seq [& body] (list 'new 'clojure.lang.LazySeq (apply list 'fn [] body)))
+(defmacro lazy-seq [& body] (list 'new 'clojure.lang.LazySeq (apply list 'fn (vector) body)))
 
 (defn cons [x s] (if (nil? s) (list x) (if (seq? s) (Cons. x s) (Cons. x (seq s)))))
 
@@ -47,59 +44,54 @@
 (defn flatten [s] (lazy-seq (if (seq s) (let [x (first s)] (if (sequential? x) (concat (flatten x) (flatten (next s))) (cons x (flatten (next s))))))))
 
 (defn filter [f? s] (lazy-seq (if (seq s) (let [x (first s)] (if (f? x) (cons x (filter f? (next s))) (filter f? (next s)))))))
-(defn remove [f? s] (filter (complement f?) s))
 
 (defn take-while [f? s] (lazy-seq (if (seq s) (let [x (first s)] (if (f? x) (cons x (take-while f? (next s))))))))
-(defn drop-while [f? s] (lazy-seq ((fn* ! [s] (if (and s (f? (first s))) (! (next s)) s)) (seq s))))
+(defn drop-while [f? s] (lazy-seq ((fn ! [s] (if (and s (f? (first s))) (! (next s)) s)) (seq s))))
 
 (defn take [n s] (lazy-seq (if (and (pos? n) (seq s)) (cons (first s) (take (dec n) (next s))))))
-(defn nthnext [s n] ((fn* ! [s n] (if (and s (pos? n)) (! (next s) (dec n)) s)) (seq s) n))
+(defn nthnext [s n] ((fn ! [s n] (if (and s (pos? n)) (! (next s) (dec n)) s)) (seq s) n))
 
 (defn interleave [s1 s2] (lazy-seq (if (and (seq s1) (seq s2)) (cons (first s1) (cons (first s2) (interleave (next s1) (next s2)))))))
 (defn interpose [x s] (next (interleave (repeat x) s)))
-(defn partition [n s] (lazy-seq (if (seq s) (let [p (take n s)] (if (= (count p) n) (cons p (partition n (nthnext s n))))))))
 
 (defn map [f s] (lazy-seq (if (seq s) (cons (f (first s)) (map f (next s))))))
 (defn map-indexed [f i s] (lazy-seq (if (seq s) (cons (f i (first s)) (map-indexed f (inc i) (next s))))))
 
-(defn reduce [f r s] ((fn* ! [r s] (if s (! (f r (first s)) (next s)) r)) r (seq s)))
+(defn reduce [f r s] ((fn ! [r s] (if s (! (f r (first s)) (next s)) r)) r (seq s)))
 
 (defn reverse [s] (reduce (fn [s x] (cons x s)) (list) s))
 
 (defn form? [s] (fn [f] (and (seq? f) (= (first f) s))))
 
-(defn fn-arg-symbol? [s] (and (symbol? s) (not (or (= s '&) (= s '_)))))
+(defn fn-arg-symbol? [s] (and (symbol? s) (not (= s '&))))
 
 (defn transform [form f? g]
-  ((fn* ! [f form] ((fn [f form] (if (sequential? form) (apply list (map f form)) form)) (fn [form] (! f form)) (f form))) (fn [form] (if (f? form) (g form) form)) form))
+  ((fn ! [f form] ((fn [f form] (if (sequential? form) (apply list (map f form)) form)) (fn [form] (! f form)) (f form))) (fn [form] (if (f? form) (g form) form)) form))
 (defn transform* [form f? g*] (transform form f? (fn [s] (apply g* (next s)))))
 
-(defn let-closure [bindings body]
-  (if (empty? bindings)
-    (list (apply list 'fn [] body))
-    (apply (fn* ! [binding & s] (list (apply list 'fn [(first binding)] (if (seq s) (list (apply ! s)) body)) (second binding))) (partition 2 bindings))))
+(defn let-closure [binding & body]
+  (if (seq binding)
+    (list (apply list 'fn (vector (first binding)) body) (second binding))
+    (list (apply list 'fn (vector) body))))
 
-(defn fn-made-unique [args body]
-  (if (string? (first body))
-    (apply list 'ast-lambda args body)
-    (let [syms (filter fn-arg-symbol? (flatten args))
-          uniq (apply hash-map (interleave syms (map (fn [%] (symbol (str % (gensym "__")))) syms)))]
-      (apply list 'ast-lambda (transform args uniq uniq) (transform body uniq uniq)))))
+(defn fn-made-unique [args & body]
+  (if (symbol? args)
+    (list 'Z (list 'fn (vector args) (apply list 'fn body)))
+    (let [syms (filter fn-arg-symbol? (flatten args))]
+      (let [uniq (apply hash-map (interleave syms (map (fn [%] (symbol (str % (gensym "__")))) syms)))]
+        (apply list 'ast-lambda (transform args uniq uniq) (transform body uniq uniq))))))
 
-(defn expand-macros [form]
-  (let [form (transform form vector? (fn [v] (apply list 'list v)))
-        form (transform form (form? 'ns) (constantly 'nil))
-        form (transform form (form? 'defmacro) (constantly 'nil))
-        form (transform* form (form? 'declare) (fn [name] (list 'def name)))
-        form (transform* form (form? 'defn) (fn [name args & body] (list 'def name (apply list 'fn args body))))
-        form (transform* form (form? 'do) (fn [& body] (apply list 'let [] body)))
-        form (transform* form (form? 'and) (fn [x y] (let [x# (gensym "x__")] (list 'let [x# x] (list 'if x# y x#)))))
-        form (transform* form (form? 'or) (fn [x y] (let [x# (gensym "x__")] (list 'let [x# x] (list 'if x# x# y)))))
-        form (transform* form (form? 'lazy-seq) (fn [& body] (list 'LazySeq. (apply list 'fn [] body))))
-        form (transform* form (form? 'let) (fn [bindings & body] (let-closure bindings body)))]
-    (transform* form (form? 'fn) (fn [args & body] (fn-made-unique args body)))))
-
-(defn ffi-fn? [body] (and (seq body) (every? string? body)))
+(defn expand-macros [s]
+  (let [s (transform s (form? 'ns)        (constantly 'nil))]
+    (let [s (transform s (form? 'defmacro)  (constantly 'nil))]
+      (let [s (transform* s (form? 'declare)  (fn [name] (list 'def name)))]
+        (let [s (transform* s (form? 'defn)     (fn [name args & body] (list 'def name (apply list 'fn args body))))]
+          (let [s (transform* s (form? 'do)       (fn [& body] (apply list 'let (vector) body)))]
+            (let [s (transform* s (form? 'and)      (fn [x y] (let [x# (gensym "x__")] (list 'let (vector x# x) (list 'if x# y x#)))))]
+              (let [s (transform* s (form? 'or)       (fn [x y] (let [x# (gensym "x__")] (list 'let (vector x# x) (list 'if x# x# y)))))]
+                (let [s (transform* s (form? 'lazy-seq) (fn [& body] (list 'LazySeq. (apply list 'fn (vector) body))))]
+                  (let [s (transform* s (form? 'let)      let-closure)]
+                            (transform* s (form? 'fn)       fn-made-unique)))))))))))
 
 (defn fn-defined? [fns env args body]
   (let [name ((deref fns) (apply list env args body))]
@@ -112,18 +104,17 @@
     (apply list 'ast-fn name env)))
 
 (defn fn->lift [form]
-   (let [f'lift (fn* ! [form fns env]
+   (let [f'lift (fn ! [form fns env]
              (transform* form (form? 'ast-lambda)
                (fn [args & body]
-                 (let [body (! body fns (concat args env))
-                       syms (reduce conj (hash-set) (filter symbol? (flatten body)))
-                       env  (apply list (filter syms (reduce conj (hash-set) (flatten env))))
-                       args (if (ffi-fn? body)
-                              args
-                              (transform args symbol? (fn [v] (if (or (not (fn-arg-symbol? v)) (syms v)) v '_))))]
-                   (or (fn-defined? fns env args body) (define-fn fns env args body))))))]
-     (let [fns (atom (ordered-map)), form (f'lift form fns nil)]
-       (concat (map (fn [%] (apply list 'ast-defn (second %) (first %))) (deref fns)) form))))
+                 (let [body (! body fns (concat args env))]
+                   (let [syms (reduce conj (hash-set) (filter symbol? (flatten body)))]
+                     (let [env  (apply list (filter syms (reduce conj (hash-set) (flatten env))))]
+                       (let [args (transform args symbol? (fn [s] (if (or (= s '&) (syms s)) s '_)))]
+                         (or (fn-defined? fns env args body) (define-fn fns env args body)))))))))]
+     (let [fns (atom (ordered-map))]
+       (let [form (f'lift form fns nil)]
+         (concat (map (fn [%] (apply list 'ast-defn (second %) (first %))) (deref fns)) form)))))
 
 (defn compile [form] (fn->lift (expand-macros form)))
 
@@ -142,9 +133,10 @@
 (defn c11-form* [model form] (map (fn [f] (c11-form model f)) form))
 
 (defn c11-model [form]
-  (let [model (atom (hash-map ':symbols (hash-set), ':lambdas (list))), program (apply list (c11-form* model (c11-symbols form)))]
-    (swap! model update ':lambdas reverse)
-    (assoc (deref model) ':program (remove empty? program))))
+  (let [model (atom (hash-map ':symbols (hash-set), ':lambdas (list)))]
+    (let [program (apply list (c11-form* model (c11-symbols form)))]
+      (swap! model update ':lambdas reverse)
+      (assoc (deref model) ':program (filter seq program)))))
 
 (defn c11-nth* [s i] (reduce (fn [s r] (str r "(" s ")")) s (take i (repeat "_next"))))
 (defn c11-nth [s i] (str "_first(" (c11-nth* s i) ")"))
@@ -155,13 +147,13 @@
 (declare destructure-args)
 
 (defn destructure-seq [args parent]
-  (map
-    (fn [%] (let [i (first %) arg (second %)]
+  (map-indexed
+    (fn [i arg]
       (if (symbol? arg)
         (c11-fn-arg arg parent i)
         (if (sequential? arg)
-          (destructure-args arg (c11-nth parent i))))))
-    (remove (fn [%] (= (second %) '_)) (map-indexed list 0 args))))
+          (destructure-args arg (c11-nth parent i)))))
+    0 args))
 
 (defn destructure-more [more parent i]
   (if (nil? more)
@@ -173,19 +165,19 @@
           (list (c11-fn-arg* tmp# parent i) (destructure-args more tmp#)))))))
 
 (defn destructure-args [args parent]
-  (let [arg? (fn [%] (not (= % '&)))
-        more (second (drop-while arg? args))
-        args (take-while arg? args)]
-    (list (destructure-seq args parent) (destructure-more more parent (count args)))))
+  (let [arg? (fn [%] (not (= % '&)))]
+    (let [more (second (drop-while arg? args))]
+      (let [args (take-while arg? args)]
+        (list (destructure-seq args parent) (destructure-more more parent (count args)))))))
 
 (defn c11-defn [model name env args & body]
-  (let [body (if (empty? body) (list "return nil()")
-               (if (ffi-fn? body) (list (apply str body))
-                 (let [% (reverse (c11-form* model body))]
-                   (reverse (cons (str "return " (first %)) (next %))))))
-        env  (filter fn-arg-symbol? (flatten env))
-        vars (flatten (destructure-args args "_args_"))]
-    (hash-map ':name name ':env env ':args args ':vars vars ':body body)))
+  (let [body (if (seq body)
+               (let [% (reverse (c11-form* model body))]
+                 (reverse (cons (str "return " (first %)) (next %))))
+               (list "return nil()"))]
+    (let [env  (filter fn-arg-symbol? (flatten env))]
+      (let [vars (flatten (destructure-args args "_args_"))]
+        (hash-map ':name name ':env env ':args args ':vars vars ':body body)))))
 
 (defn c11-call [name args] (str "_call(" name (if (seq args) (apply str ", " (interpose ", " args)) "") ")"))
 
@@ -196,7 +188,7 @@
         (if (= f 'Atom.)    (str "obj<Atom>(" (c11-form m (first s)) ")")
           (if (= f 'Cons.)    (str "obj<Cons>(" (c11-form m (first s)) ", " (c11-form m (second s)) ")")
             (if (= f 'LazySeq.) (str "obj<LazySeq>(" (c11-form m (first s)) ")")
-              (if (= f 'def)      (let [name (first s) _ (swap! m update ':symbols conj name)] (apply str name " = " (c11-form* m (next s))))
+              (if (= f 'def)      (let [name (first s)] (let [_ (swap! m update ':symbols conj name)] (apply str name " = " (c11-form* m (next s)))))
                                     (c11-call (c11-form m f) (c11-form* m s))))))))))
 
 (defn c11-form [m f]
@@ -451,7 +443,7 @@ namespace ermine {
   struct Fn : Object {
     virtual type_t __type() const { return type_id<Fn>; }
 
-    virtual Var __invoke(Ref args) const = 0;
+    virtual Var __apply(Ref args) const = 0;
   };
 
   Var _list() { return nil(); }
@@ -462,12 +454,12 @@ namespace ermine {
   }
 
   Var _call(Ref fun) {
-    return fun.cast<Fn>()->__invoke(_list());
+    return fun.cast<Fn>()->__apply(_list());
   }
 
   template <typename... A>
   Var _call(Ref fun, A const & ... args) {
-    return fun.cast<Fn>()->__invoke(_list(args...));
+    return fun.cast<Fn>()->__apply(_list(args...));
   }
 
   struct LazySeq : Object, Sequence {
@@ -558,7 +550,7 @@ namespace ermine {
         return nil();
     }
 
-    virtual Var __invoke(Ref args) const {
+    virtual Var __apply(Ref args) const {
       Ref key = _first(args);
       Ref not_found = _first(_next(args));
 
@@ -623,7 +615,7 @@ namespace ermine {
 
     Var swap(Ref f, Ref args) {
       Locking _(lock);
-      data = f.cast<Fn>()->__invoke(_cons(data, args));
+      data = f.cast<Fn>()->__apply(_cons(data, args));
       return data;
     }
 
@@ -657,7 +649,7 @@ namespace _main {
 "
       ))
 "
-    virtual Var __invoke(Ref _args_) const {
+    virtual Var __apply(Ref _args_) const {
       (void)(_args_);
 "
       (apply str (interpose "\n" (map (fn [%] (str "    " % ";")) (':vars f))))
