@@ -1,157 +1,182 @@
 (ns ermine.core
-  (:refer-clojure :only #_[& -1 0 1 def fn* if nil quote] [+ < = apply assoc conj contains? deref first get hash-map hash-set int list next number? print read-line read-string seq seq? sequential? str string? swap! symbol symbol?  defmacro identical? vector  *ns* *print-length* .. intern])
+  (:refer-clojure :only #_[& -1 0 1 def fn* if nil quote] [+ < = apply assoc conj contains? deref first get hash-map hash-set int list next number? print read-line read-string seq seq? sequential? str string? swap! symbol symbol?  defmacro identical?  *ns* *print-length* .. intern])
   (:require [clojure.core :as -]))
 
 (defmacro λ [args body] (list 'fn* args body))
-
-(defmacro let [x y z] (list (list 'λ (vector x) z) y))
-
-(def Ζ (λ [f] ((λ [x] (x x)) (λ [x] (f (λ [& s] (apply (x x) s)))))))
-
 (defmacro ζ [! args body] (list 'fn* ! args body))
 
-(def dec (λ [n] (+ n -1)))
-(def inc (λ [n] (+ n 1)))
+(defmacro let [x y z] (list (list 'λ (-/vector x) z) y))
 
-(def neg? (λ [n] (< n 0)))
-(def pos? (λ [n] (< 0 n)))
+(defmacro do* [& s]
+  (if s
+    (apply (ζ ! [x & s]
+      (if s
+        (let f (first s)
+          (apply ! (if (seq? f) (-/concat f (list x)) (list f x)) (next s)))
+        x)) (-/reverse s))))
+
+(defmacro and [x y] (let x# (-/gensym "x__") (list 'let x# x (list 'if x# y x#))))
+(defmacro or [x y] (let x# (-/gensym "x__") (list 'let x# x (list 'if x# x# y))))
 
 (defmacro Atom. [x] (list 'new 'clojure.lang.Atom x))
-
-(def atom (λ [x] (Atom. x)))
-
-(let i' (atom 0)
-  (def gensym (λ [prefix] (symbol (str prefix (swap! i' inc))))))
-
-(defmacro and [x y] (let x# (gensym "x__") (list 'let x# x (list 'if x# y x#))))
-(defmacro or [x y] (let x# (gensym "x__") (list 'let x# x (list 'if x# x# y))))
-
-(def identity (λ [x] x))
-(def constantly (λ [x] (λ [& _] x)))
-
-(def nil? (λ [x] (identical? x nil)))
-(def not (λ [x] (if x nil 'true)))
-(def some? (λ [x] (not (nil? x))))
-
-(def count (λ [s] ((ζ ! [n s] (if s (! (inc n) (next s)) n)) 0 (seq s))))
-(def nth (λ [s n not-found] ((ζ ! [s n] (if (and s (pos? n)) (if (neg? n) (first s) (! (next s) (dec n))) not-found)) (seq s) n)))
-
-(def second (λ [s] (first (next s))))
-(def third (λ [s] (first (next (next s)))))
-
-(def some (λ [f? s] (if (seq s) (or (f? (first s)) (some f? (next s))))))
-
 (defmacro Cons. [car cdr] (list 'new 'clojure.lang.Cons car cdr))
-
-(def cons (λ [x s] (if (nil? s) (list x) (if (seq? s) (Cons. x s) (Cons. x (seq s))))))
-
 (defmacro LazySeq. [thunk] (list 'new 'clojure.lang.LazySeq thunk))
-(defmacro lazy-seq [thunk] (list 'LazySeq. (list 'λ (vector) thunk)))
 
-(def repeat (λ [x] (lazy-seq (cons x (repeat x)))))
-(def repeatedly (λ [f] (lazy-seq (cons (f) (repeatedly f)))))
+(defmacro lazy-seq [thunk] (list 'LazySeq. (list 'λ (-/vector) thunk)))
 
-(def concat (λ [s1 s2] (lazy-seq (if (seq s1) (cons (first s1) (concat (next s1) s2)) s2))))
-(def flatten (λ [x]
-  (if (sequential? x) ((ζ ! [s] (lazy-seq (if (seq s) (let x (first s) (if (sequential? x) (concat (! x) (! (next s))) (cons x (! (next s)))))))) x) x)))
+(def vector list)
 
-(def filter (λ [f? s] (lazy-seq (if (seq s) (let x (first s) (if (f? x) (cons x (filter f? (next s))) (filter f? (next s))))))))
+(def -main
+  (do*
+    (let Ζ (λ [f] ((λ [x] (x x)) (λ [x] (f (λ [& s] (apply (x x) s)))))))
 
-(def take-while (λ [f? s] (lazy-seq (if (seq s) (let x (first s) (if (f? x) (cons x (take-while f? (next s)))))))))
-(def drop-while (λ [f? s] (lazy-seq ((ζ ! [s] (if (and s (f? (first s))) (! (next s)) s)) (seq s)))))
+    (let dec (λ [n] (+ n -1)))
+    (let inc (λ [n] (+ n 1)))
 
-(def take (λ [n s] (lazy-seq (if (and (pos? n) (seq s)) (cons (first s) (take (dec n) (next s)))))))
-(def nthnext (λ [s n] ((ζ ! [s n] (if (and s (pos? n)) (! (next s) (dec n)) s)) (seq s) n)))
+    (let neg? (λ [n] (< n 0)))
+    (let pos? (λ [n] (< 0 n)))
 
-(def interleave (λ [s1 s2] (lazy-seq (if (and (seq s1) (seq s2)) (cons (first s1) (cons (first s2) (interleave (next s1) (next s2))))))))
-(def interpose (λ [x s] (next (interleave (repeat x) s))))
+    (let atom (λ [x] (Atom. x)))
 
-(def map (λ [f s] (lazy-seq (if (seq s) (cons (f (first s)) (map f (next s)))))))
-(def map-indexed (λ [f i s] (lazy-seq (if (seq s) (cons (f i (first s)) (map-indexed f (inc i) (next s)))))))
+    (let gensym
+      (let i' (atom 0)
+        (λ [prefix]
+          (symbol (str prefix (swap! i' inc))))))
 
-(def reduce (λ [f r s] ((ζ ! [r s] (if s (! (f r (first s)) (next s)) r)) r (seq s))))
+    (let identity (λ [x] x))
+    (let constantly (λ [x] (λ [& _] x)))
 
-(def reverse (λ [s] (reduce (λ [s x] (cons x s)) nil s)))
+    (let nil? (λ [x] (identical? x nil)))
+    (let not (λ [x] (if x nil 'true)))
+    (let some? (λ [x] (not (nil? x))))
 
-(def update (λ [m k f & s] (assoc m k (apply f (get m k nil) s))))
+    (let count (λ [s] ((ζ ! [n s] (if s (! (inc n) (next s)) n)) 0 (seq s))))
+    (let nth (λ [s n not-found] ((ζ ! [s n] (if (and s (pos? n)) (if (neg? n) (first s) (! (next s) (dec n))) not-found)) (seq s) n)))
 
-(def form? (λ [s] (λ [f] (and (seq? f) (= (first f) s)))))
+    (let second (λ [s] (first (next s))))
+    (let third (λ [s] (first (next (next s)))))
 
-(def fn-arg-symbol? (λ [s] (and (symbol? s) (not (= s '&)))))
+    (let some (ζ ! [f? s] (if (seq s) (or (f? (first s)) (! f? (next s))))))
 
-(def transform (λ [form f? g]
-  ((ζ ! [f form] ((λ [f form] (if (sequential? form) (apply list (map f form)) form)) (λ [form] (! f form)) (f form))) (λ [form] (if (f? form) (g form) form)) form)))
-(def transform* (λ [form f? g*] (transform form f? (λ [s] (apply g* (next s))))))
+    (let reduce (λ [f r s] ((ζ ! [r s] (if s (! (f r (first s)) (next s)) r)) r (seq s))))
 
-(def compile (λ [form]
-  (let fn-made-unique
-        (λ [args body]
-          (let syms (filter fn-arg-symbol? args)
-            (let uniq (apply hash-map (interleave syms (map (λ [%] (symbol (str % (gensym "__")))) syms)))
-              (let uniq (λ [%] (get uniq % nil))
-                (list 'ast-lambda (transform args uniq uniq) (transform body uniq uniq))))))
-    (let expand-macros
-          (λ [s]
-            (let s (transform s (form? 'ns)        (constantly 'nil))
-              (let s (transform s (form? 'defmacro)  (constantly 'nil))
-                (let s (transform* s (form? 'and)      (λ [x y] (let x# (gensym "x__") (list 'let x# x (list 'if x# y x#)))))
-                  (let s (transform* s (form? 'or)       (λ [x y] (let x# (gensym "x__") (list 'let x# x (list 'if x# x# y)))))
-                    (let s (transform* s (form? 'lazy-seq) (λ [thunk] (list 'LazySeq. (list 'λ (vector) thunk))))
-                      (let s (transform* s (form? 'let)      (λ [x y z] (list (list 'λ (vector x) z) y)))
-                        (let s (transform* s (form? 'ζ)        (λ [! args body] (list 'Ζ (list 'λ (vector !) (list 'λ args body)))))
-                          (let s (transform* s (form? 'λ)        fn-made-unique)
-                                   (transform* s (form? 'vector)   (λ [& v] (apply list 'list v))))))))))))
-      (let fn->lift
-            (λ [form]
-              (let a'defs (atom nil)
+    (let cons (λ [x s] (if (nil? s) (list x) (if (seq? s) (Cons. x s) (Cons. x (seq s))))))
+    (let reverse (λ [s] (reduce (λ [s x] (cons x s)) nil s)))
+
+    (let repeat (ζ ! [x] (lazy-seq (cons x (! x)))))
+    (let repeatedly (ζ ! [f] (lazy-seq (cons (f) (! f)))))
+
+    (let concat (ζ ! [s1 s2] (lazy-seq (if (seq s1) (cons (first s1) (! (next s1) s2)) s2))))
+    (let flatten (λ [x] (if (sequential? x) ((ζ ! [s] (lazy-seq (if (seq s) (let x (first s) (if (sequential? x) (concat (! x) (! (next s))) (cons x (! (next s)))))))) x) x)))
+
+    (let filter (ζ ! [f? s] (lazy-seq (if (seq s) (let x (first s) (if (f? x) (cons x (! f? (next s))) (! f? (next s))))))))
+
+    (let take-while (ζ ! [f? s] (lazy-seq (if (seq s) (let x (first s) (if (f? x) (cons x (! f? (next s)))))))))
+    (let drop-while (λ [f? s] (lazy-seq ((ζ ! [s] (if (and s (f? (first s))) (! (next s)) s)) (seq s)))))
+
+    (let take (ζ ! [n s] (lazy-seq (if (and (pos? n) (seq s)) (cons (first s) (! (dec n) (next s)))))))
+    (let nthnext (λ [s n] ((ζ ! [s n] (if (and s (pos? n)) (! (next s) (dec n)) s)) (seq s) n)))
+
+    (let interleave (ζ ! [s1 s2] (lazy-seq (if (and (seq s1) (seq s2)) (cons (first s1) (cons (first s2) (! (next s1) (next s2))))))))
+    (let interpose (λ [x s] (next (interleave (repeat x) s))))
+
+    (let map (ζ ! [f s] (lazy-seq (if (seq s) (cons (f (first s)) (! f (next s)))))))
+    (let map-indexed (ζ ! [f i s] (lazy-seq (if (seq s) (cons (f i (first s)) (! f (inc i) (next s)))))))
+
+    (let update (λ [m k f & s] (assoc m k (apply f (get m k nil) s))))
+
+    (let form? (λ [s] (λ [f] (and (seq? f) (= (first f) s)))))
+
+    (let fn-arg-symbol? (λ [s] (and (symbol? s) (not (= s '&)))))
+
+    (let transform (λ [form f? g]
+      ((ζ ! [f form] ((λ [f form] (if (sequential? form) (apply list (map f form)) form)) (λ [form] (! f form)) (f form))) (λ [form] (if (f? form) (g form) form)) form)))
+    (let transform* (λ [form f? g*] (transform form f? (λ [s] (apply g* (next s))))))
+
+    (let compile
+      (do*
+        (let do*-macro
+              (λ [& s]
+                (if s
+                  (apply (ζ ! [x & s]
+                    (if s
+                      (let f (first s)
+                        (apply ! (if (seq? f) (concat f (list x)) (list f x)) (next s)))
+                      x)) (reverse s)))))
+        (let fn-made-unique
+              (λ [args body]
+                (let syms (filter fn-arg-symbol? args)
+                  (let uniq (apply hash-map (interleave syms (map (λ [%] (symbol (str % (gensym "__")))) syms)))
+                    (let uniq (λ [%] (get uniq % nil))
+                      (list 'ast-lambda (transform args uniq uniq) (transform body uniq uniq)))))))
+        (let expand-macros
+              (λ [s]
+                (let s (transform s (form? 'ns)        (constantly 'nil))
+                  (let s (transform s (form? 'defmacro)  (constantly 'nil))
+                    (let s (transform* s (form? 'do*)      do*-macro)
+                      (let s (transform* s (form? 'and)      (λ [x y] (let x# (gensym "x__") (list 'let x# x (list 'if x# y x#)))))
+                        (let s (transform* s (form? 'or)       (λ [x y] (let x# (gensym "x__") (list 'let x# x (list 'if x# x# y)))))
+                          (let s (transform* s (form? 'lazy-seq) (λ [thunk] (list 'LazySeq. (list 'λ (vector) thunk))))
+                            (let s (transform* s (form? 'let)      (λ [x y z] (list (list 'λ (vector x) z) y)))
+                              (let s (transform* s (form? 'ζ)        (λ [! args body] (list 'Ζ (list 'λ (vector !) (list 'λ args body)))))
+                                (let s (transform* s (form? 'λ)        fn-made-unique)
+                                         (transform* s (form? 'vector)   (λ [& v] (apply list 'list v))))))))))))))
+        (let fn->lift
+              (do*
+                (let a'defs (atom nil))
                 (let f'def
                       (λ [env args body]
                         (let name (some (λ [%] (if (= (next (next %)) (list env args body)) (second %))) (deref a'defs))
                           (if name
-                            (apply list 'ast-fn name env))))
-                  (let f'def!
-                        (λ [env args body]
-                          (let name (gensym "Fun__")
-                            (let _ (swap! a'defs (λ [%] (cons (list 'ast-defn name env args body) %)))
-                              (apply list 'ast-fn name env))))
-                    (let f'lift
-                          (ζ ! [form env]
-                            (transform* form (form? 'ast-lambda)
-                              (λ [args body]
-                                (let body (! body (concat args env))
-                                  (let syms (reduce conj (hash-set) (filter symbol? (flatten (list body))))
-                                    (let env  (apply list (filter (λ [s] (contains? syms s)) (reduce conj (hash-set) env)))
-                                      (let args (map (λ [s] (if (or (= s '&) (contains? syms s)) s '_)) args)
-                                        (or (f'def env args body) (f'def! env args body)))))))))
-                      (let form (f'lift form nil)
-                        (concat (reverse (deref a'defs)) form)))))))
-        (fn->lift (expand-macros form)))))))
+                            (apply list 'ast-fn name env)))))
+                (let f'def!
+                      (λ [env args body]
+                        (let name (gensym "Fun__")
+                          (let _ (swap! a'defs (λ [%] (cons (list 'ast-defn name env args body) %)))
+                            (apply list 'ast-fn name env)))))
+                (let f'lift
+                      (ζ ! [form env]
+                        (transform* form (form? 'ast-lambda)
+                          (λ [args body]
+                            (let body (! body (concat args env))
+                              (let syms (reduce conj (hash-set) (filter symbol? (flatten (list body))))
+                                (let env  (apply list (filter (λ [s] (contains? syms s)) (reduce conj (hash-set) env)))
+                                  (let args (map (λ [s] (if (or (= s '&) (contains? syms s)) s '_)) args)
+                                    (or (f'def env args body) (f'def! env args body))))))))))
+                (λ [form]
+                  (let form (f'lift form nil)
+                    (concat (reverse (deref a'defs)) form)))))
+        (λ [form]
+          (fn->lift (expand-macros form)))))
 
-(def escape (λ [s m] (apply str (map (λ [c] (get m c c)) (map str s)))))
+    (let escape (λ [s m] (apply str (map (λ [c] (get m c c)) (map str s)))))
 
-(def c11-model (λ [form]
-  (let f'escape
-        (λ [s]
-          (if (= 'not s) '_not_
-            (if (= '- s) '_minus_
-              (symbol (escape (str s)
-                        (hash-map "-" "_", "*" "_star_", "+" "_plus_", "/" "_slash_", "<" "_lt_", ">" "_gt_", "=" "_eq_", "?" "_qmark_", "!" "_bang_", "'" "_apos_", "#" "__"))))))
-    (let a'model (atom (hash-map 'symbols (hash-set), 'functions nil))
-      (let f'emit
-            (ζ ! [form]
-              (let f'destructure
-                    (λ [args]
-                      (let e'nth* (λ [s i] (reduce (λ [s r] (str r "(" s ")")) s (take i (repeat "_next"))))
-                        (let e'nth (λ [s i] (str "_first(" (e'nth* s i) ")"))
-                          (let d'args (λ [args] (map-indexed (λ [i name] (str "Ref " name " = " (e'nth "_args_" i))) 0 args))
-                            (let d'more (λ [name i] (if (some? name) (list (str "Ref " name " = " (e'nth* "_args_" i)))))
-                              (let not-amp? (λ [s] (not (= s '&)))
-                                (let more (second (drop-while not-amp? args))
-                                  (let args (take-while not-amp? args)
-                                    (concat (d'args args) (d'more more (count args)))))))))))
-                (let f'defn
-                      (λ [name env args body]
-                        (list 'Fun name (filter fn-arg-symbol? env) (f'destructure args) (! body)))
+    (let c11-model
+      (do*
+        (let m'escape (hash-map "-" "_", "*" "_star_", "+" "_plus_", "/" "_slash_", "<" "_lt_", ">" "_gt_", "=" "_eq_", "?" "_qmark_", "!" "_bang_", "'" "_apos_", "#" "__"))
+        (let f'escape
+              (λ [s]
+                (if (= 'not s) '_not_
+                  (if (= '- s) '_minus_
+                    (symbol (escape (str s) m'escape))))))
+        (let a'model (atom (hash-map 'symbols (hash-set), 'functions nil)))
+        (let f'emit
+              (ζ ! [form]
+                (do*
+                  (let f'destructure
+                        (do*
+                          (let e'nth* (λ [s i] (reduce (λ [s r] (str r "(" s ")")) s (take i (repeat "_next")))))
+                          (let e'nth (λ [s i] (str "_first(" (e'nth* s i) ")")))
+                          (let d'args (λ [args] (map-indexed (λ [i name] (str "Ref " name " = " (e'nth "_args_" i))) 0 args)))
+                          (let d'more (λ [name i] (if (some? name) (list (str "Ref " name " = " (e'nth* "_args_" i))))))
+                          (λ [args]
+                            (let not-amp? (λ [s] (not (= s '&)))
+                              (let more (second (drop-while not-amp? args))
+                                (let args (take-while not-amp? args)
+                                  (concat (d'args args) (d'more more (count args)))))))))
+                  (let f'defn
+                        (λ [name env args body]
+                          (list 'Fun name (filter fn-arg-symbol? env) (f'destructure args) (! body))))
                   (let f'list
                         (λ [f & s]
                           (if (= f 'ast_defn) (let _ (swap! a'model update 'functions (λ [%] (cons (apply f'defn s) %))) nil)
@@ -163,18 +188,19 @@
                                       (if (= f 'def)      (let name (first s) (let _ (swap! a'model update 'symbols conj name)
                                                             (apply str name " = " (! (second s)))))
                                                           (let name (! f) (let args (map ! s)
-                                                            (str "_call(" name (if (seq args) (apply str ", " (interpose ", " args))) ")")))))))))))
-                    (if (symbol? form) (str form)
-                      (if (number? form) (str "obj<Number>(" (int form) ")")
-                        (if (string? form) (str "obj<String>(\"" (escape form (hash-map "\"" "\\\"", "\\" "\\\\")) "\", " (count form) ")")
-                          (if (nil? form)    "nil()"
-                            (if (seq? form)    (apply f'list form))))))))))
-        (let program (apply list (map f'emit (transform form symbol? f'escape)))
-          (let _ (swap! a'model update 'functions reverse)
-            (assoc (deref a'model) 'program (filter seq program)))))))))
+                                                            (str "_call(" name (if (seq args) (apply str ", " (interpose ", " args))) ")"))))))))))))
+                  (if (symbol? form) (str form)
+                    (if (number? form) (str "obj<Number>(" (int form) ")")
+                      (if (string? form) (str "obj<String>(\"" (escape form (hash-map "\"" "\\\"", "\\" "\\\\")) "\", " (count form) ")")
+                        (if (nil? form)    "nil()"
+                          (if (seq? form)    (apply f'list form)))))))))
+        (λ [form]
+          (let program (apply list (map f'emit (transform form symbol? f'escape)))
+            (let _ (swap! a'model update 'functions reverse)
+              (assoc (deref a'model) 'program (filter seq program)))))))
 
-(def c11-syntax (λ [model]
-  (str
+    (let c11-syntax (λ [model]
+      (str
 "
 #include <atomic>
 #include <iostream>
@@ -631,7 +657,8 @@ namespace _main {
 int main() {
   return _main::main();
 }
-")))
+"
+      )))
 
-(def -main (λ [& _]
-    (print (c11-syntax (c11-model (compile (read-string (str "(" (apply str (interleave (take-while some? (repeatedly read-line)) (repeat "\n"))) ")"))))))))
+    (λ [& _]
+      (print (c11-syntax (c11-model (compile (read-string (str "(" (apply str (interleave (take-while some? (repeatedly read-line)) (repeat "\n"))) ")")))))))))
