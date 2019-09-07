@@ -1,11 +1,14 @@
 (ns ermine.core
-  (:refer-clojure :only #_[& -1 0 1 def fn* if nil quote] [+ < = apply assoc conj contains? deref first get hash-map hash-set int list next number? print read-line read-string seq seq? sequential? str string? swap! symbol symbol?  defmacro identical?  *ns* *print-length* .. intern])
+  (:refer-clojure :only #_[& -1 0 1 def fn* if nil quote] [+ < = apply deref int list number? print read-line read-string seq seq? sequential? str string? swap! symbol symbol?  defmacro identical?  *ns* *print-length* .. intern])
   (:require [clojure.core :as -]))
 
 (defmacro λ [args body] (list 'fn* args body))
 (defmacro ζ [! args body] (list 'fn* ! args body))
 
 (defmacro let [x y z] (list (list 'λ (-/vector x) z) y))
+
+(defmacro first [s] (list '-/first s))
+(defmacro next [s] (list '-/next s))
 
 (defmacro do* [& s]
   (if s
@@ -24,7 +27,7 @@
 
 (defmacro lazy-seq [thunk] (list 'LazySeq. (list 'λ (-/vector) thunk)))
 
-(def vector list)
+(defmacro vector [& v] (apply list 'list v))
 
 (def -main
   (do*
@@ -80,10 +83,13 @@
     (let interleave (ζ ! [s1 s2] (lazy-seq (if (and (seq s1) (seq s2)) (cons (first s1) (cons (first s2) (! (next s1) (next s2))))))))
     (let interpose (λ [x s] (next (interleave (repeat x) s))))
 
+    (let partition (ζ ! [n s] (lazy-seq (if (seq s) (let p (take n s) (if (= (count p) n) (cons p (! n (nthnext s n)))))))))
+
+    (let kv-map (ζ ! [& s] (if s (cons (list (first s) (second s)) (apply ! (next (next s)))))))
+    (let kv-get (λ [m k] (some (λ [p] (if (= (first p) k) (second p))) m)))
+
     (let map (ζ ! [f s] (lazy-seq (if (seq s) (cons (f (first s)) (! f (next s)))))))
     (let map-indexed (ζ ! [f i s] (lazy-seq (if (seq s) (cons (f i (first s)) (! f (inc i) (next s)))))))
-
-    (let update (λ [m k f & s] (assoc m k (apply f (get m k nil) s))))
 
     (let form? (λ [s] (λ [f] (and (seq? f) (= (first f) s)))))
 
@@ -106,8 +112,8 @@
         (let fn-made-unique
               (λ [args body]
                 (let syms (filter fn-arg-symbol? args)
-                  (let uniq (apply hash-map (interleave syms (map (λ [%] (symbol (str % (gensym "__")))) syms)))
-                    (let uniq (λ [%] (get uniq % nil))
+                  (let uniq (apply kv-map (interleave syms (map (λ [%] (symbol (str % (gensym "__")))) syms)))
+                    (let uniq (λ [%] (kv-get uniq %))
                       (list 'ast-lambda (transform args uniq uniq) (transform body uniq uniq)))))))
         (let expand-macros
               (λ [s]
@@ -134,32 +140,37 @@
                         (let name (gensym "Fun__")
                           (let _ (swap! a'defs (λ [%] (cons (list 'ast-defn name env args body) %)))
                             (apply list 'ast-fn name env)))))
+                (let s'contains?
+                      (λ [s x]
+                        (some (λ [%] (= % x)) s)))
                 (let f'lift
                       (ζ ! [form env]
                         (transform* form (form? 'ast-lambda)
                           (λ [args body]
                             (let body (! body (concat args env))
-                              (let syms (reduce conj (hash-set) (filter symbol? (flatten (list body))))
-                                (let env  (apply list (filter (λ [s] (contains? syms s)) (reduce conj (hash-set) env)))
-                                  (let args (map (λ [s] (if (or (= s '&) (contains? syms s)) s '_)) args)
-                                    (or (f'def env args body) (f'def! env args body))))))))))
+                              (let set identity
+                                (let syms (set (filter symbol? (flatten (list body))))
+                                  (let env  (set (filter (λ [s] (s'contains? syms s)) env))
+                                    (let args (map (λ [s] (if (or (= s '&) (s'contains? syms s)) s '_)) args)
+                                      (or (f'def env args body) (f'def! env args body)))))))))))
                 (λ [form]
                   (let form (f'lift form nil)
                     (concat (reverse (deref a'defs)) form)))))
         (λ [form]
           (fn->lift (expand-macros form)))))
 
-    (let escape (λ [s m] (apply str (map (λ [c] (get m c c)) (map str s)))))
+    (let escape (λ [s m] (apply str (map (λ [c] (or (kv-get m c) c)) (map str s)))))
 
     (let c11-model
       (do*
-        (let m'escape (hash-map "-" "_", "*" "_star_", "+" "_plus_", "/" "_slash_", "<" "_lt_", ">" "_gt_", "=" "_eq_", "?" "_qmark_", "!" "_bang_", "'" "_apos_", "#" "__"))
+        (let m'escape
+              (kv-map "-" "_", "%" "_pc_", "*" "_star_", "+" "_plus_", "/" "_slash_", "<" "_lt_", ">" "_gt_", "=" "_eq_", "?" "_qmark_", "!" "_bang_", "'" "_apos_", "#" "__"))
         (let f'escape
               (λ [s]
                 (if (= 'not s) '_not_
                   (if (= '- s) '_minus_
                     (symbol (escape (str s) m'escape))))))
-        (let a'model (atom (hash-map 'symbols (hash-set), 'functions nil)))
+        (let a'lambdas (atom nil))
         (let f'emit
               (ζ ! [form]
                 (do*
@@ -179,27 +190,26 @@
                           (list 'Fun name (filter fn-arg-symbol? env) (f'destructure args) (! body))))
                   (let f'list
                         (λ [f & s]
-                          (if (= f 'ast_defn) (let _ (swap! a'model update 'functions (λ [%] (cons (apply f'defn s) %))) nil)
+                          (if (= f 'ast_defn) (let _ (swap! a'lambdas (λ [%] (cons (apply f'defn s) %))) nil)
                             (if (= f 'ast_fn)   (str "obj<" (first s) ">(" (apply str (interpose ", " (filter fn-arg-symbol? (next s)))) ")")
                               (if (= f 'if)       (str "(" (! (first s)) " ? " (! (second s)) " : " (! (third s)) ")")
                                 (if (= f 'Atom.)    (str "obj<Atom>(" (! (first s)) ")")
                                   (if (= f 'Cons.)    (str "obj<Cons>(" (! (first s)) ", " (! (second s)) ")")
                                     (if (= f 'LazySeq.) (str "obj<LazySeq>(" (! (first s)) ")")
-                                      (if (= f 'def)      (let name (first s) (let _ (swap! a'model update 'symbols conj name)
-                                                            (apply str name " = " (! (second s)))))
-                                                          (let name (! f) (let args (map ! s)
-                                                            (str "_call(" name (if (seq args) (apply str ", " (interpose ", " args))) ")"))))))))))))
+                                      (if (= f 'first)    (str "_first(" (! (first s)) ")")
+                                        (if (= f 'next)     (str "_next(" (! (first s)) ")")
+                                                              (let name (! f) (let args (map ! s)
+                                                                (str "_call(" name (if (seq args) (apply str ", " (interpose ", " args))) ")")))))))))))))
                   (if (symbol? form) (str form)
                     (if (number? form) (str "obj<Number>(" (int form) ")")
-                      (if (string? form) (str "obj<String>(\"" (escape form (hash-map "\"" "\\\"", "\\" "\\\\")) "\", " (count form) ")")
+                      (if (string? form) (str "obj<String>(\"" (escape form (kv-map "\"" "\\\"", "\\" "\\\\")) "\", " (count form) ")")
                         (if (nil? form)    "nil()"
                           (if (seq? form)    (apply f'list form)))))))))
         (λ [form]
           (let program (apply list (map f'emit (transform form symbol? f'escape)))
-            (let _ (swap! a'model update 'functions reverse)
-              (assoc (deref a'model) 'program (filter seq program)))))))
+            (cons (filter seq program) (reverse (deref a'lambdas)))))))
 
-    (let c11-syntax (λ [model]
+    (let c11-syntax (λ [program & lambdas]
       (str
 "
 #include <atomic>
@@ -477,92 +487,6 @@ namespace ermine {
     }
   };
 
-  struct Map : Fun, Sequence {
-    Var data;
-
-    Map() : data(obj<Cons>(nil(), nil())) { }
-
-    Map(Ref l) : data(l) { }
-
-    virtual type_t __type() const { return type_id<Map>; }
-
-    Var assoc(Ref k, Ref v) const {
-      Ref m = dissoc_aux(k);
-      Ref _keys = _first(m);
-      Ref _values = _next(m);
-
-      return obj<Map>(_cons(_cons(k, _keys), _cons(v, _values)));
-    }
-
-    Var dissoc_aux(Ref k) const {
-      Ref _keys = _first(data);
-      Var _values = _next(data);
-
-      Var ks;
-      Var vs;
-
-      for (Var i = _first(_keys), z = _next(_keys); !z.is_nil(); i = _first(z), z = _next(z)) {
-        if (!i.equals(k)) {
-          ks = _cons(i, ks);
-          vs = _cons(_first(_values), vs);
-          _values = _next(_values);
-        }
-      }
-
-      return _cons(ks, vs);
-    }
-
-    Var dissoc(Ref k) const {
-      return obj<Map>(dissoc_aux(k));
-    }
-
-    Var get(Ref key, Ref not_found) const {
-      Ref _keys = _first(data);
-      Var _values = _next(data);
-
-      for (Var i = _first(_keys), z = _next(_keys); !z.is_nil(); i = _first(z), z = _next(z)) {
-        if (key.equals(i))
-          return _first(_values);
-
-        _values = _next(_values);
-      }
-
-      if (!not_found.is_nil())
-        return not_found;
-      else
-        return nil();
-    }
-
-    virtual Var __apply(Ref args) const {
-      Ref key = _first(args);
-      Ref not_found = _first(_next(args));
-
-      return get(key, not_found);
-    }
-
-    Var vals() const { return _next(data); }
-    Var keys() const { return _first(data); }
-
-    virtual Sequence* __sequence() { return this; }
-
-    virtual Var __first() {
-      Ref _keys = _first(data);
-      Ref _values = _next(data);
-
-      return obj<Cons>(_first(_keys), obj<Cons>(_first(_values), nil()));
-    }
-
-    virtual Var __next() {
-      Ref _keys = _first(data);
-      Ref _values = _next(data);
-
-      if (_next(_keys).is_nil())
-        return nil();
-      else
-        return obj<Map>(_cons(_next(_keys), _next(_values)));
-    }
-  };
-
   struct String : Object, Sequence {
     Var data;
 
@@ -619,7 +543,6 @@ namespace _main {
   using namespace ermine;
 
 "
-    (apply str (interpose "\n" (map (λ [%] (str "  Var " % ";")) (get model 'symbols nil))))
     (apply str (map (λ [fun]
       (apply (λ [name env vars body]
         (str
@@ -643,12 +566,12 @@ namespace _main {
     }
   };
 "
-        )) (next fun))) (get model 'functions nil)))
+        )) (next fun))) lambdas))
 "
 
   int main() {
 "
-    (apply str (interpose "\n" (map (λ [%] (str "    " % ";")) (get model 'program nil))))
+    (apply str (interpose "\n" (map (λ [%] (str "    " % ";")) program)))
 "
     return 0;
   }
@@ -661,4 +584,4 @@ int main() {
       )))
 
     (λ [& _]
-      (print (c11-syntax (c11-model (compile (read-string (str "(" (apply str (interleave (take-while some? (repeatedly read-line)) (repeat "\n"))) ")")))))))))
+      (print (apply c11-syntax (c11-model (compile (read-string (str "(" (apply str (interleave (take-while some? (repeatedly read-line)) (repeat "\n"))) ")")))))))))
