@@ -1,11 +1,34 @@
 (ns ermine.core
-  (:refer-clojure :only #_[& -1 0 1 def fn* if nil quote] [+ < = apply deref int list number? print read-line read-string seq seq? sequential? str string? swap! symbol symbol?  defmacro identical?  *ns* *print-length* .. intern])
+  (:refer-clojure :only #_[& -1 0 1 def fn* if nil] [= apply list print read-line read-string str symbol symbol?  defmacro  *ns* *print-length* .. intern])
   (:require [clojure.core :as -]))
 
-(defmacro λ [args body] (list 'fn* args body))
-(defmacro ζ [! args body] (list 'fn* ! args body))
+(defmacro λ [args body] (list 'fn* (-/vec args) body))
+(defmacro ζ [! args body] (list 'fn* ! (-/vec args) body))
 
-(defmacro let [x y z] (list (list 'λ (-/vector x) z) y))
+(defmacro let [x y z] (list (list 'λ (list x) z) y))
+
+(defmacro and [x y] (let x# (-/gensym "x__") (list 'let x# x (list 'if x# y x#))))
+(defmacro or [x y] (let x# (-/gensym "x__") (list 'let x# x (list 'if x# x# y))))
+
+(defmacro Atom. [x] (list 'new 'clojure.lang.Atom x))
+
+(defmacro deref [a] (list '-/deref a))
+(defmacro swap! [a f] (list '-/swap! a f))
+
+(defmacro Cons. [car cdr] (list 'new 'clojure.lang.Cons car cdr))
+(defmacro LazySeq. [thunk] (list 'new 'clojure.lang.LazySeq thunk))
+
+(defmacro lazy-seq [thunk] (list 'LazySeq. (list 'λ nil thunk)))
+
+(defmacro + [x y] (list '-/+ x y))
+(defmacro < [x y] (list '-/< x y))
+
+(defmacro nil? [x] (list '-/nil? x))
+
+(defmacro number? [x] (list '-/number? x))
+(defmacro string? [x] (list '-/string? x))
+
+(defmacro seq? [x] (list '-/seq? x))
 
 (defmacro first [s] (list '-/first s))
 (defmacro next [s] (list '-/next s))
@@ -17,17 +40,6 @@
         (let f (first s)
           (apply ! (if (seq? f) (-/concat f (list x)) (list f x)) (next s)))
         x)) (-/reverse s))))
-
-(defmacro and [x y] (let x# (-/gensym "x__") (list 'let x# x (list 'if x# y x#))))
-(defmacro or [x y] (let x# (-/gensym "x__") (list 'let x# x (list 'if x# x# y))))
-
-(defmacro Atom. [x] (list 'new 'clojure.lang.Atom x))
-(defmacro Cons. [car cdr] (list 'new 'clojure.lang.Cons car cdr))
-(defmacro LazySeq. [thunk] (list 'new 'clojure.lang.LazySeq thunk))
-
-(defmacro lazy-seq [thunk] (list 'LazySeq. (list 'λ (-/vector) thunk)))
-
-(defmacro vector [& v] (apply list 'list v))
 
 (def -main
   (do*
@@ -49,9 +61,10 @@
     (let identity (λ [x] x))
     (let constantly (λ [x] (λ [& _] x)))
 
-    (let nil? (λ [x] (identical? x nil)))
-    (let not (λ [x] (if x nil 'true)))
+    (let not (λ [x] (if x nil -1)))
     (let some? (λ [x] (not (nil? x))))
+
+    (let seq (λ [s] (if (seq? s) s nil)))
 
     (let count (λ [s] ((ζ ! [n s] (if s (! (inc n) (next s)) n)) 0 (seq s))))
     (let nth (λ [s n not-found] ((ζ ! [s n] (if (and s (pos? n)) (if (neg? n) (first s) (! (next s) (dec n))) not-found)) (seq s) n)))
@@ -70,7 +83,7 @@
     (let repeatedly (ζ ! [f] (lazy-seq (cons (f) (! f)))))
 
     (let concat (ζ ! [s1 s2] (lazy-seq (if (seq s1) (cons (first s1) (! (next s1) s2)) s2))))
-    (let flatten (λ [x] (if (sequential? x) ((ζ ! [s] (lazy-seq (if (seq s) (let x (first s) (if (sequential? x) (concat (! x) (! (next s))) (cons x (! (next s)))))))) x) x)))
+    (let flatten (λ [x] (if (seq? x) ((ζ ! [s] (lazy-seq (if (seq s) (let x (first s) (if (seq? x) (concat (! x) (! (next s))) (cons x (! (next s)))))))) x) x)))
 
     (let filter (ζ ! [f? s] (lazy-seq (if (seq s) (let x (first s) (if (f? x) (cons x (! f? (next s))) (! f? (next s))))))))
 
@@ -96,7 +109,7 @@
     (let fn-arg-symbol? (λ [s] (and (symbol? s) (not (= s '&)))))
 
     (let transform (λ [form f? g]
-      ((ζ ! [f form] ((λ [f form] (if (sequential? form) (apply list (map f form)) form)) (λ [form] (! f form)) (f form))) (λ [form] (if (f? form) (g form) form)) form)))
+      ((ζ ! [f form] ((λ [f form] (if (seq? form) (apply list (map f form)) form)) (λ [form] (! f form)) (f form))) (λ [form] (if (f? form) (g form) form)) form)))
     (let transform* (λ [form f? g*] (transform form f? (λ [s] (apply g* (next s))))))
 
     (let compile
@@ -122,11 +135,10 @@
                     (let s (transform* s (form? 'do*)      do*-macro)
                       (let s (transform* s (form? 'and)      (λ [x y] (let x# (gensym "x__") (list 'let x# x (list 'if x# y x#)))))
                         (let s (transform* s (form? 'or)       (λ [x y] (let x# (gensym "x__") (list 'let x# x (list 'if x# x# y)))))
-                          (let s (transform* s (form? 'lazy-seq) (λ [thunk] (list 'LazySeq. (list 'λ (vector) thunk))))
-                            (let s (transform* s (form? 'let)      (λ [x y z] (list (list 'λ (vector x) z) y)))
-                              (let s (transform* s (form? 'ζ)        (λ [! args body] (list 'Ζ (list 'λ (vector !) (list 'λ args body)))))
-                                (let s (transform* s (form? 'λ)        fn-made-unique)
-                                         (transform* s (form? 'vector)   (λ [& v] (apply list 'list v))))))))))))))
+                          (let s (transform* s (form? 'lazy-seq) (λ [thunk] (list 'LazySeq. (list 'λ nil thunk))))
+                            (let s (transform* s (form? 'let)      (λ [x y z] (list (list 'λ (list x) z) y)))
+                              (let s (transform* s (form? 'ζ)        (λ [! args body] (list 'Ζ (list 'λ (list !) (list 'λ args body)))))
+                                       (transform* s (form? 'λ)        fn-made-unique)))))))))))
         (let fn->lift
               (do*
                 (let a'defs (atom nil))
@@ -164,7 +176,7 @@
     (let c11-model
       (do*
         (let m'escape
-              (kv-map "-" "_", "%" "_pc_", "*" "_star_", "+" "_plus_", "/" "_slash_", "<" "_lt_", ">" "_gt_", "=" "_eq_", "?" "_qmark_", "!" "_bang_", "'" "_apos_", "#" "__"))
+              (kv-map "-" "_", "%" "_5_", "." "_0_", "*" "_8_", "+" "_plus_", "/" "_7_", "<" "_lt_", ">" "_gt_", "=" "_eq_", "?" "_9_", "!" "_4_", "'" "_1_", "#" "_3_"))
         (let f'escape
               (λ [s]
                 (if (= 'not s) '_not_
@@ -190,18 +202,27 @@
                           (list 'Fun name (filter fn-arg-symbol? env) (f'destructure args) (! body))))
                   (let f'list
                         (λ [f & s]
-                          (if (= f 'ast_defn) (let _ (swap! a'lambdas (λ [%] (cons (apply f'defn s) %))) nil)
-                            (if (= f 'ast_fn)   (str "obj<" (first s) ">(" (apply str (interpose ", " (filter fn-arg-symbol? (next s)))) ")")
-                              (if (= f 'if)       (str "(" (! (first s)) " ? " (! (second s)) " : " (! (third s)) ")")
-                                (if (= f 'Atom.)    (str "obj<Atom>(" (! (first s)) ")")
-                                  (if (= f 'Cons.)    (str "obj<Cons>(" (! (first s)) ", " (! (second s)) ")")
-                                    (if (= f 'LazySeq.) (str "obj<LazySeq>(" (! (first s)) ")")
-                                      (if (= f 'first)    (str "_first(" (! (first s)) ")")
-                                        (if (= f 'next)     (str "_next(" (! (first s)) ")")
-                                                              (let name (! f) (let args (map ! s)
-                                                                (str "_call(" name (if (seq args) (apply str ", " (interpose ", " args))) ")")))))))))))))
+                          (if (= f 'ast_defn)   (let _ (swap! a'lambdas (λ [%] (cons (apply f'defn s) %))) nil)
+                            (if (= f 'ast_fn)     (str "obj<" (first s) ">(" (apply str (interpose ", " (filter fn-arg-symbol? (next s)))) ")")
+                              (if (= f 'if)         (str "(" (! (first s)) " ? " (! (second s)) " : " (! (third s)) ")")
+                                (if (= f '_plus_)     (str "obj<Number>(Number::unbox(" (! (first s)) ") + Number::unbox(" (! (second s)) "))")
+                                  (if (= f '_lt_)       (str "(Number::unbox(" (! (first s)) ") < Number::unbox(" (! (second s)) ") ? _true : _false)")
+                                    (if (= f 'Atom_0_)    (str "obj<Atom>(" (! (first s)) ")")
+                                      (if (= f 'deref)      (str "_deref(" (! (first s)) ")")
+                                        (if (= f 'swap_4_)    (str "_swap(" (! (first s)) ", " (! (second s)) ")")
+                                          (if (= f 'Cons_0_)    (str "obj<Cons>(" (! (first s)) ", " (! (second s)) ")")
+                                            (if (= f 'LazySeq_0_) (str "obj<LazySeq>(" (! (first s)) ")")
+                                              (if (= f 'seq_9_)     (str "(" (! (first s)) ".cast<Sequence>() ? _true : _false)")
+                                                (if (= f 'first)      (str "_first(" (! (first s)) ")")
+                                                  (if (= f 'next)       (str "_next(" (! (first s)) ")")
+                                                    (if (= f 'nil_9_)     (str "(" (! (first s)) ".is_nil() ? _true : _false)")
+                                                      (if (= f 'number_9_)  (str "(" (! (first s)) ".cast<Number>() ? _true : _false)")
+                                                        (if (= f 'string_9_)  (str "(" (! (first s)) ".cast<String>() ? _true : _false)")
+                                                                                (let name (! f) (let args (map ! s)
+                                                                                  (str "_call(" name (if (seq args) (apply str ", " (interpose ", " args))) ")")))
+                                                        ))))))))))))))))))
                   (if (symbol? form) (str form)
-                    (if (number? form) (str "obj<Number>(" (int form) ")")
+                    (if (number? form) (str "obj<Number>(" form ")")
                       (if (string? form) (str "obj<String>(\"" (escape form (kv-map "\"" "\\\"", "\\" "\\\\")) "\", " (count form) ")")
                         (if (nil? form)    "nil()"
                           (if (seq? form)    (apply f'list form)))))))))
@@ -226,17 +247,17 @@ namespace ermine {
   };
 
   namespace memory {
-    static std::mutex lock;
+    std::mutex lock;
 
-    static void* allocate(size_t s) {
+    void* allocate(size_t s) {
       Locking _(lock);
       return std::malloc(s);
     }
 
     template <typename T>
-    static void* allocate() { return allocate(sizeof(T)); }
+    void* allocate() { return allocate(sizeof(T)); }
 
-    static void free(void* p) {
+    void free(void* p) {
       Locking _(lock);
       std::free(p);
     }
@@ -262,8 +283,6 @@ namespace ermine {
     virtual type_t __type() const = 0;
 
     virtual bool __equals(Ref r) const;
-
-    virtual Sequence* __sequence() { return nullptr; }
 
     void operator delete(void* p) { memory::free(p); }
 
@@ -327,9 +346,6 @@ namespace ermine {
 
   bool Object::__equals(Ref r) const { return (this == r.obj); }
 
-  template <>
-  Sequence* Var::cast<Sequence>() const { return obj->__sequence(); }
-
   template <typename T, typename... A>
   Var obj(A... args) {
     void* storage = memory::allocate<T>();
@@ -341,25 +357,9 @@ namespace ermine {
     return Var();
   }
 
-  Var _first(Ref s);
-  Var _next(Ref s);
-
   struct Sequence {
     virtual Var __first() = 0;
     virtual Var __next() = 0;
-
-    static bool equals(Var lhs, Var rhs) {
-      for ( ; ; lhs = _next(lhs), rhs = _next(rhs)) {
-        Ref lf = _first(lhs);
-        Ref rf = _first(rhs);
-
-        if (lf.is_nil() && rf.is_nil())
-          return true;
-
-        if (!lf.equals(rf))
-          return false;
-      }
-    }
   };
 
   Var _first(Ref s) {
@@ -376,6 +376,19 @@ namespace ermine {
       return s.cast<Sequence>()->__next();
   }
 
+  bool Sequence::equals(Var lhs, Var rhs) {
+    for ( ; ; lhs = _next(lhs), rhs = _next(rhs)) {
+      Ref lf = _first(lhs);
+      Ref rf = _first(rhs);
+
+      if (lf.is_nil() && rf.is_nil())
+        return true;
+
+      if (!lf.equals(rf))
+        return false;
+    }
+  }
+
   struct Cons : Object, Sequence {
     const Var car;
     const Var cdr;
@@ -383,8 +396,6 @@ namespace ermine {
     Cons(Ref car, Ref cdr) : car(car), cdr(cdr) { }
 
     virtual type_t __type() const { return type_id<Cons>; }
-
-    virtual Sequence* __sequence() { return this; }
 
     virtual Var __first() { return car; }
     virtual Var __next() { return cdr; }
@@ -427,11 +438,14 @@ namespace ermine {
     virtual bool __equals(Ref r) const {
       return (value == Number::unbox(r));
     }
-
-    static int unbox(Ref r) {
-      return r.cast<Number>()->value;
-    }
   };
+
+  int Number::unbox(Ref r) {
+    return r.cast<Number>()->value;
+  }
+
+  const Var _true = obj<Number>(-1);
+  const Var _false = nil();
 
   struct Fun : Object {
     virtual type_t __type() const { return type_id<Fun>; }
@@ -465,8 +479,6 @@ namespace ermine {
 
     virtual type_t __type() const { return type_id<LazySeq>; }
 
-    virtual Sequence* __sequence() { return this; }
-
     virtual Var __first() {
       Locking _(lock);
 
@@ -495,8 +507,6 @@ namespace ermine {
     String(Ref s) : data(s) { }
 
     virtual type_t __type() const { return type_id<String>; }
-
-    virtual Sequence* __sequence() { return this; }
 
     virtual Var __first() {
       return _first(data);
@@ -537,6 +547,14 @@ namespace ermine {
       return data;
     }
   };
+
+  Var _deref(Ref a) {
+    return a.cast<Atom>()->deref();
+  }
+
+  Var _swap(Ref a, Ref f) {
+    return a.cast<Atom>()->swap(f, nil());
+  }
 }
 
 namespace _main {
